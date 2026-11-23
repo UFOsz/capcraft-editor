@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Capcraft Editor</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="icon.png">
+</head>
+<body>
+<!-- ===== Barra superior ===== -->
+<header class="topbar">
+  <div class="brand"><img src="icon.png" alt=""><span>Capcraft</span></div>
+  <div class="menu-wrap">
+    <button id="btnMenu" class="btn-menu">Menú ▾</button>
+    <div id="menu" class="dropdown" hidden>
+      <button data-act="home">🏠 Inicio / proyectos</button>
+      <button data-act="new">＋ Nuevo proyecto</button>
+      <button data-act="rename">✎ Renombrar proyecto</button>
+      <button data-act="import">⬆ Importar medios</button>
+      <hr>
+      <button data-act="updates">🔄 Buscar actualizaciones</button>
+      <button data-act="about">ℹ Acerca de Capcraft</button>
+      <button data-act="shortcuts">⌨ Atajos de teclado</button>
+      <button data-act="devtools">🛠 Herramientas de desarrollo</button>
+    </div>
+  </div>
+  <div id="saveState" class="save-state"></div>
+  <div class="title" id="projName">Capcraft Editor</div>
+  <div class="spacer"></div>
+  <button id="updBadge" class="upd-badge" hidden></button>
+  <button id="btnExport" class="btn-export">⬆ Exportar</button>
+</header>
+
+<main class="workspace">
+  <section class="upper">
+    <!-- ===== Panel izquierdo (biblioteca) ===== -->
+    <aside class="lib">
+      <nav class="lib-tabs" id="libTabs">
+        <button class="ltab active" data-tab="media"><i>🎞</i>Multimedia</button>
+        <button class="ltab" data-tab="audio"><i>♪</i>Audio</button>
+        <button class="ltab" data-tab="text"><i>T</i>Texto</button>
+        <button class="ltab" data-tab="subs"><i>💬</i>Subtítulos</button>
+        <button class="ltab" data-tab="filters"><i>◐</i>Filtros</button>
+        <button class="ltab" data-tab="anims"><i>✦</i>Animaciones</button>
+      </nav>
+      <div class="lib-body" id="libBody"></div>
+    </aside>
+
+    <!-- ===== Reproductor ===== -->
+    <section class="player">
+      <div class="panel-title">Reproductor <span class="muted" id="playerInfo"></span></div>
+      <div class="stage" id="stage">
+        <div class="screen" id="screen">
+          <canvas id="comp"></canvas>
+          <canvas id="subsCanvas"></canvas>
+          <div id="editLayer" class="edit-layer">
+            <div id="guideV" class="guide v" hidden></div><div id="guideH" class="guide h" hidden></div>
+            <div id="tbox" class="tbox" hidden>
+              <div class="h nw" data-h="scale"></div><div class="h ne" data-h="scale"></div>
+              <div class="h sw" data-h="scale"></div><div class="h se" data-h="scale"></div>
+              <div class="rot" data-h="rot" title="Arrastra para girar (Shift = de 15 en 15°)"></div>
+            </div>
+          </div>
+        </div>
+        <div id="tbar" class="tbar" hidden>
+          <label class="check" id="tbAllWrap" title="Marcado: afecta a todos los subtítulos. Desmarcado: solo al seleccionado."><input id="tbAll" type="checkbox" checked> Aplicar a todos</label>
+          <span class="tsep" id="tbSep"></span>
+          <label class="inl">Tamaño <input id="tbScale" type="number" min="5" max="1000" step="5"> %</label>
+          <label class="inl">Giro <input id="tbRot" type="number" min="-180" max="180" step="1"> °</label>
+          <button id="tbFlipX" class="btn tiny" title="Voltear horizontal">↔</button>
+          <button id="tbFlipY" class="btn tiny" title="Voltear vertical">↕</button>
+          <button id="tbReset" class="btn tiny">Reiniciar</button>
+          <span id="tbOwn" class="own" hidden>✦ ajuste propio <button id="tbOwnClear" class="btn tiny ghost">quitar</button></span>
+        </div>
+        <div id="emptyStage" class="empty-stage">
+          <div class="big">🎬</div>
+          <p><b>Importa videos, fotos o música</b> desde el panel Multimedia<br>o arrástralos aquí.</p>
+        </div>
+      </div>
+      <div class="transport">
+        <span id="tCur" class="tc cur">00:00:00</span><span class="tc">/</span><span id="tDur" class="tc">00:00:00</span>
+        <div class="spacer"></div>
+        <button id="btnPrev" class="icon" title="Ir al inicio (Inicio)">⏮</button>
+        <button id="btnPlay" class="icon play" title="Reproducir (Espacio)">▶</button>
+        <button id="btnNext" class="icon" title="Ir al final (Fin)">⏭</button>
+        <div class="spacer"></div>
+        <select id="selRatio" title="Relación de aspecto">
+          <option value="1080x1920">9:16</option><option value="1920x1080">16:9</option><option value="1080x1080">1:1</option>
+          <option value="1080x1350">4:5</option><option value="1080x1440">3:4</option><option value="2560x1080">21:9</option>
+        </select>
+        <button id="btnFull" class="icon" title="Pantalla completa">⛶</button>
+      </div>
+    </section>
+
+    <!-- ===== Propiedades ===== -->
+    <aside class="props">
+      <div class="panel-title" id="propsTitle">Detalles</div>
+      <div class="props-tabs" id="propsTabs"></div>
+      <div class="props-body" id="propsBody"></div>
+    </aside>
+  </section>
+
+  <div class="splitter" id="splitter" title="Arrastra para cambiar el tamaño"></div>
+
+  <!-- ===== Línea de tiempo ===== -->
+  <section class="timeline" id="timeline">
+    <div class="tl-toolbar">
+      <button class="ticon" id="tbUndo" title="Deshacer (Ctrl+Z)">↶</button>
+      <button class="ticon" id="tbRedo" title="Rehacer (Ctrl+Y)">↷</button>
+      <span class="tsep"></span>
+      <button class="ticon" id="tbSplit" title="Dividir en el cabezal (S / Ctrl+B)">✂</button>
+      <button class="ticon" id="tbDelete" title="Eliminar (Supr)">🗑</button>
+      <button class="ticon" id="tbDup" title="Duplicar (Ctrl+D)">⧉</button>
+      <button class="ticon" id="tbDetach" title="Separar audio del video">🔊✂</button>
+      <span class="tsep"></span>
+      <button class="ticon on" id="tbMagnet" title="Pista principal magnética (sin huecos)">🧲</button>
+      <button class="ticon on" id="tbSnap" title="Ajuste automático (imán a bordes y cabezal)">⇥|</button>
+      <div class="spacer"></div>
+      <button class="ticon" id="tbZoomOut" title="Alejar (-)">－</button>
+      <input id="tlZoom" type="range" min="0" max="1000" value="300">
+      <button class="ticon" id="tbZoomIn" title="Acercar (+)">＋</button>
+      <button class="ticon" id="tbFit" title="Ajustar a la ventana">⤢</button>
+    </div>
+    <div class="tl-body">
+      <div class="tl-heads" id="tlHeads"></div>
+      <div class="tl-scroll" id="tlScroll">
+        <div class="tl-inner" id="tlInner">
+          <div class="tl-ruler" id="tlRuler"></div>
+          <div class="tl-rows" id="tlRows"></div>
+          <div class="tl-head" id="tlHead"><div class="knob"></div></div>
+          <div class="tl-snapline" id="tlSnap" hidden></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ===== Inicio / proyectos ===== -->
+<div id="home" class="home" hidden>
+  <div class="home-box">
+    <div class="home-head">
+      <div class="brand big"><img src="icon.png" alt=""><span>Capcraft <b>Editor</b></span></div>
+      <button id="homeNew" class="btn-export">＋ Nuevo proyecto</button>
+    </div>
+    <h4>Proyectos</h4>
+    <div id="homeList" class="home-list"></div>
+  </div>
+</div>
+
+<div id="modal" class="modal" hidden><div class="modal-box"><h3 id="modalTitle"></h3><div id="modalBody"></div><div id="modalBtns" class="row gap end"></div></div></div>
+<div id="toasts" class="toasts"></div>
+<div id="mediaPool" hidden></div>
+
+<script src="vendor/jassub/jassub.umd.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

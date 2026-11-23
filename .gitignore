@@ -1,0 +1,16 @@
+node_modules/
+app/dist/
+engine/.venv/
+engine/build/
+engine/dist/
+engine/cache/
+engine/*.spec
+engine/templates/mis_plantillas.json
+engine/_render_*.ass
+ffmpeg/
+ffmpeg_tmp/
+ffmpeg.zip
+proyectos/
+__pycache__/
+*.pyc
+app/package-lock.json

@@ -1,0 +1,86 @@
+{
+  "_info": "Plantillas de subtítulos animados por palabra. Colores en #RRGGBB. 'animation' define el efecto (ver capcraft_subs/ass_render.py). Duplica una plantilla y cambia valores para crear las tuyas.",
+
+  "hormozi_pop": {
+    "name": "Pop amarillo (estilo Hormozi)",
+    "font": "Anton", "size": 92, "uppercase": true,
+    "color": "#FFFFFF", "highlight": "#FFE600", "outline_color": "#000000",
+    "outline": 6, "shadow": 3, "shadow_color": "#000000",
+    "max_words": 3, "max_chars": 18, "position": "lower", "margin_v": 520,
+    "animation": "pop", "pop_scale": 125, "pop_ms": 70
+  },
+
+  "karaoke_fill": {
+    "name": "Karaoke relleno",
+    "font": "Poppins Black", "size": 74, "uppercase": false,
+    "color": "#38F9D7", "base_color": "#FFFFFF", "outline_color": "#101010",
+    "outline": 5, "shadow": 0,
+    "max_words": 5, "max_chars": 26, "position": "lower", "margin_v": 480,
+    "animation": "karaoke"
+  },
+
+  "neon_box": {
+    "name": "Caja neón en la palabra activa",
+    "font": "Poppins ExtraBold", "size": 76, "uppercase": true,
+    "color": "#FFFFFF", "highlight": "#FF2E88", "active_text": "#FFFFFF", "outline_color": "#000000",
+    "outline": 4, "box_outline": 16, "shadow": 0,
+    "max_words": 3, "max_chars": 20, "position": "center", "margin_v": 0,
+    "animation": "box"
+  },
+
+  "bounce_in": {
+    "name": "Rebote al aparecer",
+    "font": "Poppins Black", "size": 84, "uppercase": false,
+    "color": "#FFFFFF", "highlight": "#7CFF4F", "outline_color": "#000000",
+    "outline": 6, "shadow": 2,
+    "max_words": 4, "max_chars": 22, "position": "lower", "margin_v": 520,
+    "animation": "bounce", "pop_ms": 90
+  },
+
+  "typewriter": {
+    "name": "Máquina de escribir",
+    "font": "Poppins ExtraBold", "size": 68, "uppercase": false,
+    "color": "#FFFFFF", "outline_color": "#000000",
+    "outline": 4, "shadow": 2,
+    "max_words": 6, "max_chars": 30, "position": "lower", "margin_v": 440,
+    "animation": "reveal"
+  },
+
+  "blur_fade": {
+    "name": "Desenfoque suave",
+    "font": "Bebas Neue", "size": 110, "uppercase": true,
+    "color": "#FFFFFF", "highlight": "#FFB800", "outline_color": "#000000",
+    "outline": 3, "shadow": 4, "shadow_color": "#000000",
+    "max_words": 3, "max_chars": 18, "position": "lower", "margin_v": 520,
+    "animation": "blur_in", "pop_ms": 160
+  },
+
+  "rainbow_pop": {
+    "name": "Arcoíris con pop",
+    "font": "Anton", "size": 96, "uppercase": true,
+    "palette": ["#FF4D4D", "#FFE600", "#4DFF88", "#4DC3FF", "#C04DFF"],
+    "color": "#FFFFFF", "outline_color": "#000000",
+    "outline": 7, "shadow": 0,
+    "max_words": 3, "max_chars": 18, "position": "lower", "margin_v": 520,
+    "animation": "rainbow", "pop_scale": 118, "pop_ms": 70
+  },
+
+  "one_word": {
+    "name": "Una palabra gigante",
+    "font": "Anton", "size": 150, "uppercase": true,
+    "palette": ["#FFFFFF", "#FFE600", "#FFFFFF", "#00E5FF"],
+    "color": "#FFFFFF", "outline_color": "#000000",
+    "outline": 8, "shadow": 4,
+    "max_words": 1, "position": "center", "margin_v": 0,
+    "animation": "one_word", "pop_ms": 90
+  },
+
+  "dim_active": {
+    "name": "Línea tenue, palabra brillante",
+    "font": "Poppins ExtraBold", "size": 72, "uppercase": false,
+    "color": "#FFFFFF", "dim_alpha": "90", "outline_color": "#000000",
+    "outline": 4, "shadow": 2,
+    "max_words": 5, "max_chars": 28, "position": "lower", "margin_v": 460,
+    "animation": "dim"
+  }
+}

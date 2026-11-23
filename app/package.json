@@ -1,0 +1,50 @@
+{
+  "name": "capcraft-editor",
+  "productName": "Capcraft Editor",
+  "version": "0.4.0",
+  "description": "Editor de video tipo CapCut con subtítulos animados por palabra",
+  "author": "UFOsz",
+  "main": "main.js",
+  "homepage": "https://github.com/UFOsz/capcraft-editor",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.ufosz.capcraft",
+    "productName": "Capcraft Editor",
+    "copyright": "Capcraft",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "icon.ico", "package.json"],
+    "extraResources": [
+      { "from": "../engine/dist/capcraft-engine", "to": "engine/capcraft-engine" },
+      { "from": "../engine/templates", "to": "engine-res/templates", "filter": ["plantillas.json"] },
+      { "from": "../engine/fonts", "to": "engine-res/fonts" },
+      { "from": "../ffmpeg", "to": "ffmpeg" },
+      { "from": "renderer", "to": "renderer" }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Capcraft Editor",
+      "artifactName": "Capcraft-Editor-Setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [{ "provider": "github", "owner": "UFOsz", "repo": "capcraft-editor", "releaseType": "release" }]
+  }
+}

@@ -1,0 +1,4 @@
+# Transcripcion con tiempos por palabra (funciona en CPU, sin instalaciones extra)
+faster-whisper>=1.1
+# Opcional, mas preciso (alineacion forzada). Instalar despues con: pip install whisperx
+# whisperx>=3.3
