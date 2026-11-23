@@ -30,5 +30,5 @@ Tus proyectos y plantillas se guardan en `%APPDATA%\Capcraft Editor` y no se toc
 
 ### Publicar una versión nueva
 1. Sube el número en `app/package.json` (por ejemplo `0.4.1`).
-2. `git commit -am "v0.4.1" && git tag v0.4.1 && git push --follow-tags`
-3. GitHub Actions empaqueta el motor, prueba que funcione, construye el instalador y lo publica en Releases. Todas las apps instaladas se actualizan solas.
+2. `git commit -am "v0.4.1" && git push`
+3. GitHub Actions detecta la versión nueva, empaqueta el motor, prueba que funcione, construye el instalador y lo publica en Releases (crea la etiqueta `v0.4.1`). Todas las apps instaladas se actualizan solas. Si la versión ya existe, no vuelve a publicar.
