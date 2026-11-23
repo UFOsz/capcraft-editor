@@ -60,6 +60,17 @@ jobs:
         shell: pwsh
         run: ./ci/smoke-test.ps1
 
+      - name: Crear la etiqueta de la versión
+        if: steps.ver.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $t = "v${{ steps.ver.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git ls-remote --exit-code --tags origin "refs/tags/$t" | Out-Null
+          if ($LASTEXITCODE -ne 0) { git tag $t; git push origin $t }
+          exit 0
+
       - uses: actions/setup-node@v4
         if: steps.ver.outputs.skip != 'true'
         with:
