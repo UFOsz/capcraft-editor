@@ -24,8 +24,9 @@ jobs:
         run: |
           $v = (Get-Content app/package.json | ConvertFrom-Json).version
           "version=$v" >> $env:GITHUB_OUTPUT
-          gh release view "v$v" --repo ${{ github.repository }} 2>$null
-          if ($LASTEXITCODE -eq 0) { "skip=true" >> $env:GITHUB_OUTPUT; Write-Host "v$v ya existe: no se publica de nuevo" } else { "skip=false" >> $env:GITHUB_OUTPUT }
+          $rels = gh api "repos/${{ github.repository }}/releases?per_page=100" | ConvertFrom-Json
+          $done = $rels | Where-Object { $_.tag_name -eq "v$v" -and -not $_.draft -and ($_.assets.name -contains "latest.yml") }
+          if ($done) { "skip=true" >> $env:GITHUB_OUTPUT; Write-Host "v$v ya está publicada: no se publica de nuevo" } else { "skip=false" >> $env:GITHUB_OUTPUT }
           exit 0
 
       - uses: actions/setup-python@v5
@@ -71,6 +72,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { git tag $t; git push origin $t }
           exit 0
 
+      - name: Preparar la versión como borrador
+        if: steps.ver.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $t = "v${{ steps.ver.outputs.version }}"
+          # quita borradores o versiones a medias con la misma etiqueta
+          $rels = gh api "repos/${{ github.repository }}/releases?per_page=100" | ConvertFrom-Json
+          foreach ($r in ($rels | Where-Object { $_.tag_name -eq $t })) { gh api -X DELETE "repos/${{ github.repository }}/releases/$($r.id)" | Out-Null }
+          $msg = git log -1 --pretty=%B
+          gh api -X POST "repos/${{ github.repository }}/releases" -f tag_name=$t -f name="Capcraft Editor ${{ steps.ver.outputs.version }}" -f body="$msg" -F draft=true | Out-Null
+
       - uses: actions/setup-node@v4
         if: steps.ver.outputs.skip != 'true'
         with:
@@ -86,6 +100,25 @@ jobs:
           npm install --no-audit --no-fund
           node node_modules/electron/install.js
           npx electron-builder --win --publish always
+
+      - name: Publicar la versión y limpiar versiones incompletas
+        if: steps.ver.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $t = "v${{ steps.ver.outputs.version }}"
+          $rels = gh api "repos/${{ github.repository }}/releases?per_page=100" | ConvertFrom-Json
+          $mine = $rels | Where-Object { $_.tag_name -eq $t } | Sort-Object { $_.assets.Count } -Descending
+          $keep = $mine[0]
+          if (-not ($keep.assets.name -contains "latest.yml")) { throw "Falta latest.yml en la versión $t" }
+          gh api -X PATCH "repos/${{ github.repository }}/releases/$($keep.id)" -F draft=false -f make_latest=true | Out-Null
+          foreach ($r in $rels) {
+            if ($r.id -ne $keep.id -and -not ($r.assets.name -contains "latest.yml" -and $r.tag_name -ne $t)) {
+              Write-Host "Borrando versión incompleta $($r.tag_name) ($($r.id))"
+              gh api -X DELETE "repos/${{ github.repository }}/releases/$($r.id)" | Out-Null
+            }
+          }
 
       - name: Guardar el instalador como artefacto
         if: steps.ver.outputs.skip != 'true'
