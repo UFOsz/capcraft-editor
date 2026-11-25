@@ -1,7 +1,7 @@
 {
   "name": "capcraft-editor",
   "productName": "Capcraft Editor",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Editor de video tipo CapCut con subtítulos animados por palabra",
   "author": "UFOsz",
   "main": "main.js",
