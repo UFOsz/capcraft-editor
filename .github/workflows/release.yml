@@ -3,7 +3,7 @@ name: Publicar versión (Windows)
 on:
   push:
     branches: [main]
-    paths: ['app/package.json', '.github/workflows/release.yml']   # publicar = subir la versión en app/package.json
+    paths: ['app/package.json', '.github/workflows/release.yml', 'ci/**']   # publicar = subir la versión en app/package.json
   workflow_dispatch:
 
 permissions:
