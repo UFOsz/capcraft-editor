@@ -20,52 +20,53 @@ API = "https://api.openverse.org/v1/audio/"
 UA = "CapcraftEditor/0.5 (+https://github.com/UFOsz/capcraft-editor)"
 MAX_BYTES = 60 * 1024 * 1024
 ID_RE = re.compile(r"^[0-9a-fA-F-]{32,36}$")
-ALLOWED_LICENSES = {"cc0", "pdm", "by", "by-sa"}
+ALLOWED_LICENSES = {"cc0", "pdm", "by", "by-sa"}  # sin NC (no comercial) ni ND (sin modificaciones)
+LICENSE_PARAM = "cc0,pdm,by,by-sa"
 EXTS = {"mp3", "ogg", "wav", "flac", "m4a", "opus", "aac"}
 
-# (id, nombre, búsqueda, categoría)
+# (id, nombre, búsquedas en orden de preferencia, tipo). Si una búsqueda trae pocas pistas se suman las siguientes.
 GENRES = [
-    ("tendencias", "🔥 Tendencias", "upbeat energetic", "music"),
-    ("phonk", "Phonk", "phonk", "music"),
-    ("reggaeton", "Reggaetón", "reggaeton", "music"),
-    ("latina", "Latina", "latin", "music"),
-    ("pop", "Pop", "pop", "music"),
-    ("electronica", "Electrónica", "electronic", "music"),
-    ("edm", "EDM / Dance", "dance edm", "music"),
-    ("hiphop", "Hip hop", "hip hop", "music"),
-    ("trap", "Trap", "trap beat", "music"),
-    ("rock", "Rock", "rock", "music"),
-    ("lofi", "Lo-fi", "lofi", "music"),
-    ("vlog", "Vlog", "vlog", "music"),
-    ("alegre", "Alegre", "happy", "music"),
-    ("relajante", "Relajante", "relaxing", "music"),
-    ("cinematica", "Cinemática", "cinematic", "music"),
-    ("epica", "Épica", "epic", "music"),
-    ("corporativa", "Corporativa / Anuncios", "corporate", "music"),
-    ("acustica", "Acústica", "acoustic guitar", "music"),
-    ("jazz", "Jazz", "jazz", "music"),
-    ("funk", "Funk", "funk", "music"),
-    ("clasica", "Clásica", "classical piano", "music"),
-    ("romantica", "Romántica", "romantic", "music"),
-    ("suspenso", "Suspenso", "suspense dark", "music"),
-    ("entrenamiento", "Entrenamiento", "workout", "music"),
-    ("infantil", "Infantil", "children kids", "music"),
-    ("navidad", "Navidad", "christmas", "music"),
-    ("ambiente", "Ambiente", "ambient", "music"),
+    ("tendencias", "🔥 Tendencias", ["upbeat", "energetic pop", "happy"], "music"),
+    ("phonk", "Phonk", ["phonk", "drift", "dark trap", "trap bass"], "music"),
+    ("reggaeton", "Reggaetón", ["reggaeton", "dembow", "moombahton", "latin urban"], "music"),
+    ("latina", "Latina", ["latin", "cumbia", "salsa", "bossa nova"], "music"),
+    ("pop", "Pop", ["pop", "indie pop"], "music"),
+    ("electronica", "Electrónica", ["electronic", "synthwave"], "music"),
+    ("edm", "EDM / Dance", ["edm", "dance", "house"], "music"),
+    ("hiphop", "Hip hop", ["hip hop", "rap beat", "boom bap"], "music"),
+    ("trap", "Trap", ["trap", "trap beat"], "music"),
+    ("rock", "Rock", ["rock", "punk rock"], "music"),
+    ("lofi", "Lo-fi", ["lofi", "chillhop", "lo-fi"], "music"),
+    ("vlog", "Vlog", ["vlog", "travel", "upbeat acoustic"], "music"),
+    ("alegre", "Alegre", ["happy", "cheerful"], "music"),
+    ("relajante", "Relajante", ["relaxing", "chill", "calm"], "music"),
+    ("cinematica", "Cinemática", ["cinematic", "soundtrack", "trailer"], "music"),
+    ("epica", "Épica", ["epic", "orchestral"], "music"),
+    ("corporativa", "Corporativa / Anuncios", ["corporate", "motivational", "business"], "music"),
+    ("acustica", "Acústica", ["acoustic guitar", "acoustic"], "music"),
+    ("jazz", "Jazz", ["jazz", "swing"], "music"),
+    ("funk", "Funk", ["funk", "disco"], "music"),
+    ("clasica", "Clásica", ["classical piano", "classical", "piano"], "music"),
+    ("romantica", "Romántica", ["romantic", "love"], "music"),
+    ("suspenso", "Suspenso", ["suspense", "tension", "dark ambient"], "music"),
+    ("entrenamiento", "Entrenamiento", ["workout", "sport", "energetic"], "music"),
+    ("infantil", "Infantil", ["children", "kids"], "music"),
+    ("navidad", "Navidad", ["christmas"], "music"),
+    ("ambiente", "Ambiente", ["ambient"], "music"),
 ]
 SFX = [
-    ("sfx_whoosh", "Whoosh / transición", "whoosh", "sound_effect"),
-    ("sfx_pop", "Pop / burbuja", "pop bubble", "sound_effect"),
-    ("sfx_click", "Clic / interfaz", "click button", "sound_effect"),
-    ("sfx_notif", "Notificación", "notification", "sound_effect"),
-    ("sfx_aplausos", "Aplausos", "applause", "sound_effect"),
-    ("sfx_risas", "Risas", "laugh", "sound_effect"),
-    ("sfx_caja", "Caja registradora / dinero", "cash register", "sound_effect"),
-    ("sfx_impacto", "Impacto / golpe", "impact hit", "sound_effect"),
-    ("sfx_explosion", "Explosión", "explosion", "sound_effect"),
-    ("sfx_tambores", "Redoble", "drum roll", "sound_effect"),
-    ("sfx_ding", "Ding / campana", "ding bell", "sound_effect"),
-    ("sfx_glitch", "Glitch", "glitch", "sound_effect"),
+    ("sfx_whoosh", "Whoosh / transición", ["whoosh", "swoosh"], "sfx"),
+    ("sfx_pop", "Pop / burbuja", ["pop bubble", "pop"], "sfx"),
+    ("sfx_click", "Clic / interfaz", ["click", "button click"], "sfx"),
+    ("sfx_notif", "Notificación", ["notification", "alert"], "sfx"),
+    ("sfx_aplausos", "Aplausos", ["applause"], "sfx"),
+    ("sfx_risas", "Risas", ["laugh", "laughter"], "sfx"),
+    ("sfx_caja", "Caja registradora / dinero", ["cash register", "coins"], "sfx"),
+    ("sfx_impacto", "Impacto / golpe", ["impact", "hit"], "sfx"),
+    ("sfx_explosion", "Explosión", ["explosion"], "sfx"),
+    ("sfx_tambores", "Redoble", ["drum roll"], "sfx"),
+    ("sfx_ding", "Ding / campana", ["ding", "bell"], "sfx"),
+    ("sfx_glitch", "Glitch", ["glitch"], "sfx"),
 ]
 ALL = {g[0]: g for g in GENRES + SFX}
 
@@ -117,29 +118,65 @@ def _norm(r: dict) -> dict | None:
     }
 
 
-def search(genre: str | None, q: str | None, page: int = 1) -> dict:
-    page = max(1, min(int(page or 1), 20))
-    if q:
-        query, cat = _clean(q, 80), ("sound_effect" if genre and genre.startswith("sfx") else "music")
-    else:
-        g = ALL.get(genre or "tendencias") or ALL["tendencias"]
-        query, cat = g[2], g[3]
-    params = {"q": query, "license_type": "commercial", "page_size": 20, "page": page, "mature": "false"}
-    if cat:
-        params["category"] = cat
+def _query(query: str, kind: str, page: int) -> tuple[list, bool]:
+    params = {"q": query, "license": LICENSE_PARAM, "page_size": 20, "page": page, "mature": "false"}
+    if kind == "music":
+        params["category"] = "music"
+    else:  # los efectos de Freesound no traen categoría en Openverse
+        params["source"] = "freesound"
     url = API + "?" + urllib.parse.urlencode(params)
     with _lock:
         hit = _cache.get(url)
         if hit and time.time() - hit[0] < 6 * 3600:
             return hit[1]
-    data = _get_json(url)
+    last = None
+    for attempt in range(2):  # Openverse a veces responde 500 de forma intermitente
+        try:
+            data = _get_json(url)
+            break
+        except MusicError as e:
+            last = e
+            if "limitó" in str(e):
+                raise
+            time.sleep(1.0)
+    else:
+        raise last
     items = [x for x in (_norm(r) for r in data.get("results", [])) if x]
-    out = {"items": items, "page": page, "has_more": page < int(data.get("page_count") or 1)}
+    if kind == "sfx":
+        items = [x for x in items if 0 < x["duration"] <= 60] or items
+    out = (items, page < int(data.get("page_count") or 1))
     with _lock:
         _cache[url] = (time.time(), out)
-        if len(_cache) > 300:
+        if len(_cache) > 400:
             _cache.pop(next(iter(_cache)))
     return out
+
+
+def search(genre: str | None, q: str | None, page: int = 1) -> dict:
+    page = max(1, min(int(page or 1), 20))
+    g = ALL.get(genre or "tendencias") or ALL["tendencias"]
+    kind = g[3]
+    queries = [_clean(q, 80)] if q else list(g[2])
+    if page > 1:  # "cargar más": continúa con la búsqueda principal
+        items, more = _query(queries[0], kind, page)
+        return {"items": items, "page": page, "has_more": more}
+    seen, items, more, errors = set(), [], False, []
+    for i, query in enumerate(queries):
+        try:
+            got, m = _query(query, kind, 1)
+        except MusicError as e:
+            errors.append(str(e))
+            continue
+        if i == 0:
+            more = m
+        for x in got:
+            if x["id"] not in seen:
+                seen.add(x["id"]); items.append(x)
+        if len(items) >= 15:
+            break
+    if not items and errors:
+        raise MusicError(errors[0])
+    return {"items": items[:40], "page": 1, "has_more": more}
 
 
 def fetch(track_id: str, folder: Path) -> dict:
@@ -190,5 +227,5 @@ def fetch(track_id: str, folder: Path) -> dict:
     return meta
 
 
-def genres() -> dict:
+def genres() -> dict:  # noqa: D103
     return {"music": [{"id": g[0], "name": g[1]} for g in GENRES], "sfx": [{"id": g[0], "name": g[1]} for g in SFX]}
