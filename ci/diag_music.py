@@ -1,31 +1,34 @@
-"""Diagnóstico de la biblioteca de música (Openverse) desde el CI."""
+"""Diagnóstico de la biblioteca de música (Openverse) desde el CI: cuántos resultados da cada combinación de filtros."""
 import json
-import pathlib
 import ssl
-import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "engine"))
-URL = "https://api.openverse.org/v1/audio/?q=phonk&license_type=commercial&category=music&page_size=3"
-req = urllib.request.Request(URL, headers={"User-Agent": "CapcraftEditor/0.5 (+https://github.com/UFOsz/capcraft-editor)"})
-try:
-    r = urllib.request.urlopen(req, timeout=20, context=ssl.create_default_context())
-    d = json.loads(r.read())
-    print("RAW OK", r.status, d.get("result_count"))
-    for i in d.get("results", []):
-        print("  -", i.get("title"), "|", i.get("license"), "|", i.get("filetype"), "|", str(i.get("url"))[:80], "| dur", i.get("duration"))
-except urllib.error.HTTPError as e:
-    print("RAW HTTP", e.code, e.read()[:500])
-except Exception as e:  # noqa: BLE001
-    print("RAW ERR", type(e).__name__, e)
+UA = {"User-Agent": "CapcraftEditor/0.5 (+https://github.com/UFOsz/capcraft-editor)"}
+CTX = ssl.create_default_context()
 
-from capcraft_subs import music  # noqa: E402
-try:
-    res = music.search("phonk", None)
-    print("SEARCH", len(res["items"]), res["items"][:1])
-    if res["items"]:
-        m = music.fetch(res["items"][0]["id"], pathlib.Path("m"))
-        print("FETCH", m["path"], pathlib.Path(m["path"]).stat().st_size, m["license_name"])
-except Exception as e:  # noqa: BLE001
-    print("APP ERR", type(e).__name__, e)
+
+def count(params):
+    url = "https://api.openverse.org/v1/audio/?" + urllib.parse.urlencode({**params, "page_size": 5})
+    try:
+        d = json.loads(urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20, context=CTX).read())
+        res = d.get("results", [])
+        sample = [(r.get("title"), r.get("license"), r.get("source"), r.get("category"), r.get("genres")) for r in res[:2]]
+        return f"{d.get('result_count')} {sample}"
+    except urllib.error.HTTPError as e:
+        return f"HTTP {e.code} {e.read()[:200]}"
+    except Exception as e:  # noqa: BLE001
+        return f"ERR {e}"
+
+
+tests = [
+    {"q": "phonk"}, {"q": "phonk", "category": "music"}, {"q": "phonk", "license_type": "commercial"},
+    {"q": "happy"}, {"q": "happy", "category": "music"}, {"q": "happy", "license_type": "commercial"},
+    {"q": "happy", "category": "music", "license_type": "commercial"},
+    {"q": "music"}, {"q": "rock", "source": "jamendo"}, {"q": "rock", "source": "jamendo", "license_type": "commercial"},
+    {"q": "whoosh"}, {"q": "whoosh", "category": "sound_effect", "license_type": "commercial"},
+    {"q": "cinematic", "license": "cc0,by,by-sa"}, {"q": "piano", "license": "by"},
+]
+for t in tests:
+    print("T", json.dumps(t), "->", count(t))
