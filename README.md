@@ -21,7 +21,16 @@ Tus proyectos y plantillas se guardan en `%APPDATA%\Capcraft Editor` y no se toc
 - Transformar en el lienzo (mover, escalar, girar, voltear), color, 10 filtros, velocidad 0.1–10x, volumen y fundidos.
 - Animaciones de entrada/salida (fundido, zoom, deslizar; textos: pop, máquina de escribir).
 - Subtítulos con Whisper: 9 plantillas animadas por palabra, editor de palabras, palabras clave, quitar silencios.
+- Biblioteca de **música y efectos de sonido por géneros** (Phonk, Reggaetón, Pop, Electrónica, Lo-fi, Cinemática, Corporativa…): escuchar, favoritos, agregar en un clic. Solo obras Creative Commons **aptas para uso comercial** (Openverse: Jamendo, Freesound, Wikimedia); las CC BY muestran el texto de créditos al exportar.
 - Exportación MP4 (original / 720p / 480p) y .srt.
+
+## Seguridad
+- El motor local solo escucha en `127.0.0.1` y exige un **token secreto por sesión** (cookie HttpOnly/SameSite=Strict); valida `Host` y `Origin` (protege contra DNS rebinding y CSRF) y solo acepta JSON.
+- Rutas validadas: solo se leen archivos de video/audio/imagen locales, se exporta solo a `.mp4`, FFmpeg solo abre archivos locales (`-protocol_whitelist file`); colores, fuentes y números de proyectos/plantillas se sanean antes de llegar a FFmpeg o ASS.
+- Interfaz con CSP estricta, ventana Electron con `sandbox`, `contextIsolation`, sin Node, sin navegación externa, sin permisos de cámara/micrófono, IPC solo desde la ventana propia.
+- Descargas de música por ID desde la API oficial, solo HTTPS y con tamaño máximo.
+- Actualizaciones verificadas con SHA-512 (`latest.yml`); FFmpeg verificado con SHA-256 en el CI.
+- Reporta vulnerabilidades abriendo un *issue* privado o escribiendo al autor.
 
 ## Desarrollo
 - `engine/` — motor en Python (servidor local + FFmpeg + faster-whisper).

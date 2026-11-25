@@ -25,6 +25,7 @@ from pathlib import Path
 from .ass_render import AssRenderer, words_to_srt
 from .transcribe import transcribe
 from . import project as prj
+from . import music
 
 ENGINE = Path(__file__).resolve().parent.parent
 # Rutas: en desarrollo todo vive junto al código; en la app instalada (empaquetada) los recursos son
@@ -158,10 +159,6 @@ def probe(path: str) -> dict:
     }
 
 
-def project_path(video: str) -> Path:
-    return Path(video).with_suffix(Path(video).suffix + ".capcraft.json")
-
-
 # ------------------------------------------------------------------ trabajos en segundo plano
 JOBS: dict[str, dict] = {}
 
@@ -191,82 +188,6 @@ def job_transcribe(job, path, model, language):
 
     data = transcribe(path, "auto", model, language or None, progress=prog)
     return data
-
-
-def remap_words(words: list[dict], segments: list[list[float]]) -> list[dict]:
-    """Pasa las palabras del tiempo original al tiempo del video ya cortado."""
-    out, offset = [], 0.0
-    for s, e in segments:
-        for w in words:
-            mid = (w["start"] + w["end"]) / 2
-            if s <= mid < e:
-                nw = dict(w)
-                nw["start"] = round(offset + max(w["start"], s) - s, 3)
-                nw["end"] = round(offset + min(w["end"], e) - s, 3)
-                out.append(nw)
-        offset += e - s
-    return out
-
-
-def job_export(job, req):
-    path, out = req["path"], req["out"]
-    info = probe(path)
-    dur = info["duration"]
-    segs = [[max(0.0, float(s)), min(dur, float(e))] for s, e in (req.get("segments") or [[0, dur]])]
-    segs = [s for s in segs if s[1] - s[0] > 0.04]
-    full = len(segs) == 1 and segs[0][0] <= 0.01 and segs[0][1] >= dur - 0.01
-    words = req["words"] if full else remap_words(req["words"], segs)
-    out_dur = sum(e - s for s, e in segs)
-
-    ass_text, _ = AssRenderer(req["template"], info["width"], info["height"],
-                              req.get("keywords") or []).render_full(words)
-    tmp_name = f"_render_{uuid.uuid4().hex[:8]}.ass"
-    (WORK / tmp_name).write_text(ass_text, encoding="utf-8")
-    if req.get("srt"):
-        Path(out).with_suffix(".srt").write_text(words_to_srt(words), encoding="utf-8")
-
-    sub = f"ass={tmp_name}:fontsdir=fonts"
-    if full:
-        fc = f"[0:v]{sub}[vo]"
-        amap = ["-map", "0:a?"]
-    else:
-        parts, labels = [], ""
-        for i, (s, e) in enumerate(segs):
-            parts.append(f"[0:v]trim=start={s:.3f}:end={e:.3f},setpts=PTS-STARTPTS[v{i}]")
-            if info["has_audio"]:
-                parts.append(f"[0:a]atrim=start={s:.3f}:end={e:.3f},asetpts=PTS-STARTPTS[a{i}]")
-                labels += f"[v{i}][a{i}]"
-            else:
-                labels += f"[v{i}]"
-        a = 1 if info["has_audio"] else 0
-        parts.append(f"{labels}concat=n={len(segs)}:v=1:a={a}[vc]" + ("[ac]" if a else ""))
-        parts.append(f"[vc]{sub}[vo]")
-        fc = ";".join(parts)
-        amap = ["-map", "[ac]"] if a else []
-
-    q = {"alta": "16", "media": "20", "liviana": "24"}.get(req.get("quality", "alta"), "18")
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
-           "-i", str(Path(path).resolve()), "-filter_complex", fc, "-map", "[vo]", *amap,
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", q, "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(Path(out).resolve())]
-    job["message"] = "Exportando…"
-    try:
-        p = subprocess.Popen(cmd, cwd=WORK, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
-        for line in p.stdout:
-            if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
-                try:
-                    t = int(line.split("=")[1]) / 1e6
-                    job["progress"] = min(0.99, t / max(out_dur, 0.01))
-                    job["message"] = f"Exportando… {int(job['progress'] * 100)} %"
-                except ValueError:
-                    pass
-        err = p.stderr.read()
-        if p.wait() != 0:
-            raise RuntimeError(err.strip()[-800:] or "FFmpeg falló")
-    finally:
-        (WORK / tmp_name).unlink(missing_ok=True)
-    return {"out": out}
 
 
 def job_proxy(job, path):
@@ -347,7 +268,7 @@ def list_projects():
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
             out.append({"id": f.stem, "name": d.get("name", f.stem), "modified": f.stat().st_mtime,
-                        "duration": prj.project_duration(d), "thumb": d.get("thumb"),
+                        "duration": prj.project_duration(d), "thumb": clean_thumb(d.get("thumb")),
                         "ratio": f"{d['canvas']['width']}x{d['canvas']['height']}"})
         except Exception:
             continue
@@ -358,21 +279,86 @@ def safe_id(pid: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "", pid)[:64] or "proyecto"
 
 
+# ------------------------------------------------------------------ seguridad
+# Token secreto: la app de escritorio lo genera al arrancar y lo pasa al motor (CAPCRAFT_TOKEN). La ventana lo
+# recibe una sola vez en la URL y queda en una cookie HttpOnly/SameSite=Strict. Así ninguna página web abierta
+# en el navegador del usuario puede usar este servidor local aunque adivine el puerto.
+TOKEN = os.environ.get("CAPCRAFT_TOKEN", "")
+PORT = 0
+MAX_BODY = 25 * 1024 * 1024
+MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mpg", ".mpeg", ".3gp", ".ts", ".mts", ".m2ts", ".wmv", ".flv",
+             ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".flac", ".opus", ".wma",
+             ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic"}
+THUMB_RE = re.compile(r"^data:image/(jpeg|png);base64,[A-Za-z0-9+/=]+$")
+CSP = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; "
+       "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; "
+       "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+MUSIC = DATA / "musica"
+FAVS = MUSIC / "favoritos.json"
+
+
+class Forbidden(Exception):
+    pass
+
+
+def media_path(raw: str) -> Path:
+    """Valida una ruta de medio enviada por la interfaz: archivo local existente con extensión de video/audio/imagen."""
+    if not raw or "\x00" in raw or "://" in raw or raw.startswith(("\\\\", "//")):
+        raise Forbidden("Ruta no permitida")
+    path = Path(raw)
+    if path.suffix.lower() not in MEDIA_EXT and not raw.endswith(".preview.mp4"):
+        raise Forbidden("Tipo de archivo no permitido")
+    if not path.is_file():
+        raise FileNotFoundError(raw)
+    return path
+
+
+def output_path(raw: str) -> str:
+    if not raw or "\x00" in raw or "://" in raw or raw.startswith(("\\\\", "//")):
+        raise Forbidden("Ruta de salida no permitida")
+    out = Path(raw).resolve()
+    if out.suffix.lower() != ".mp4":
+        raise Forbidden("La salida debe ser un archivo .mp4")
+    if not out.parent.is_dir():
+        raise Forbidden("La carpeta de destino no existe")
+    return str(out)
+
+
+def check_project_media(proj: dict) -> None:
+    for m in (proj.get("media") or {}).values():
+        media_path(str(m.get("path", "")))
+
+
+def clean_thumb(t):
+    return t if isinstance(t, str) and len(t) < 400_000 and THUMB_RE.match(t) else None
+
+
 # ------------------------------------------------------------------ HTTP
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Capcraft/0.2"
+    server_version = "Capcraft"
+    sys_version = ""
 
     def log_message(self, fmt, *args):  # silencio salvo errores
         if args and str(args[1]).startswith(("4", "5")):
             sys.stderr.write("%s\n" % (fmt % args))
 
+    # --- cabeceras de seguridad comunes
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("X-Frame-Options", "DENY")
+        super().end_headers()
+
     # --- respuestas
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, extra=None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -381,33 +367,59 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_BODY:
+            raise Forbidden("Solicitud demasiado grande")
         return json.loads(self.rfile.read(n) or b"{}")
 
-    def _file(self, path: Path, ctype: str | None = None):
+    # --- control de acceso
+    def _authorized(self, method: str) -> bool:
+        host = (self.headers.get("Host") or "").lower()
+        if PORT and host not in (f"127.0.0.1:{PORT}", f"localhost:{PORT}"):
+            return False  # protege contra DNS rebinding
+        origin = self.headers.get("Origin")
+        if origin and PORT and origin.lower() not in (f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"):
+            return False  # otra página web intentando usar el servidor
+        if method == "POST" and "application/json" not in (self.headers.get("Content-Type") or ""):
+            return False  # evita formularios/peticiones simples de otros sitios
+        if not TOKEN:
+            return True
+        cookie = self.headers.get("Cookie") or ""
+        m = re.search(r"(?:^|;\s*)cc_token=([A-Za-z0-9_-]+)", cookie)
+        import hmac
+        return bool(m) and hmac.compare_digest(m.group(1), TOKEN)
+
+    def _file(self, path: Path, ctype: str | None = None, html=False):
         if not path.is_file():
             return self._err("No encontrado", 404)
         size = path.stat().st_size
         ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         rng = self.headers.get("Range")
         start, end = 0, size - 1
-        if rng:
-            m = re.match(r"bytes=(\d*)-(\d*)", rng)
-            if m:
+        if rng and size:
+            m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+            if m and (m.group(1) or m.group(2)):
                 if m.group(1):
                     start = int(m.group(1))
                     end = int(m.group(2)) if m.group(2) else size - 1
                 else:
-                    start = size - int(m.group(2))
+                    start = max(0, size - int(m.group(2)))
                 end = min(end, size - 1)
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
             self.send_response(206)
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         else:
             self.send_response(200)
-        length = end - start + 1
+        length = max(0, end - start + 1)
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-cache")
+        if html:
+            self.send_header("Content-Security-Policy", CSP)
         self.end_headers()
         try:
             with open(path, "rb") as f:
@@ -427,6 +439,19 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         p = u.path
+        # arranque: la ventana llega con ?t=TOKEN una sola vez; se guarda como cookie y se limpia la URL
+        if TOKEN and p in ("/", "/index.html") and "t" in q:
+            import hmac
+            if hmac.compare_digest(q["t"][0], TOKEN) and (self.headers.get("Host") or "").lower() == f"127.0.0.1:{PORT}":
+                self.send_response(302)
+                self.send_header("Set-Cookie", f"cc_token={TOKEN}; Path=/; HttpOnly; SameSite=Strict")
+                self.send_header("Location", "/")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+        if not self._authorized("GET"):
+            return self._err("Acceso denegado", 403)
         try:
             if p == "/api/templates":
                 return self._json(load_templates())
@@ -454,19 +479,33 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/projects":
                 return self._json(list_projects())
             if p == "/api/thumbs":
-                f = prj.make_thumbs(q["path"][0], CACHE, q.get("type", ["video"])[0], float(q.get("dur", ["1"])[0]))
+                path = media_path(q.get("path", [""])[0])
+                f = prj.make_thumbs(str(path), CACHE, q.get("type", ["video"])[0], float(q.get("dur", ["1"])[0]))
                 return self._file(f)
             if p == "/api/wave":
-                return self._file(prj.make_wave(q["path"][0], CACHE))
+                return self._file(prj.make_wave(str(media_path(q.get("path", [""])[0])), CACHE))
             if p == "/media":
-                return self._file(Path(q.get("path", [""])[0]))
+                return self._file(media_path(q.get("path", [""])[0]))
+            if p == "/api/music/genres":
+                return self._json(music.genres())
+            if p == "/api/music/search":
+                try:
+                    return self._json(music.search(q.get("genre", [None])[0], q.get("q", [None])[0], int(q.get("page", ["1"])[0])))
+                except music.MusicError as e:
+                    return self._err(str(e), 502)
+            if p == "/api/music/favs":
+                return self._json(read_json(FAVS, []))
             if p.startswith("/fonts/"):
                 return self._file(FONTS / Path(urllib.parse.unquote(p[7:])).name)
             rel = urllib.parse.unquote(p.lstrip("/")) or "index.html"
             target = (RENDERER / rel).resolve()
-            if RENDERER.resolve() not in target.parents and target != RENDERER.resolve():
+            if RENDERER.resolve() not in target.parents:
                 return self._err("Prohibido", 403)
-            return self._file(target)
+            return self._file(target, html=target.suffix == ".html")
+        except Forbidden as e:
+            return self._err(str(e), 403)
+        except FileNotFoundError:
+            return self._err("No encontrado", 404)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             return self._err(str(e), 500)
@@ -474,75 +513,91 @@ class Handler(BaseHTTPRequestHandler):
     # --- POST
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
+        if not self._authorized("POST"):
+            return self._err("Acceso denegado", 403)
         try:
             b = self._body()
-            if p == "/api/probe":
-                return self._json(probe(b["path"]))
-            if p == "/api/ass":
-                r = AssRenderer(b["template"], int(b.get("width", 1080)), int(b.get("height", 1920)),
-                                b.get("keywords") or [])
-                ass, lines = r.render_full(b["words"])
-                return self._json({"ass": ass, "lines": lines})
-            if p == "/api/transcribe":
-                jid = start_job(job_transcribe, b["path"], b.get("model", "medium"), b.get("language", "es"))
-                return self._json({"job": jid})
             if p == "/api/media/info":
-                return self._json(prj.media_info(b["path"]))
+                return self._json(prj.media_info(str(media_path(b["path"]))))
             if p == "/api/v2/ass":
                 ass, lines = prj.build_ass(b["project"], load_templates()["builtin"])
                 return self._json({"ass": ass, "lines": lines})
             if p == "/api/v2/export":
+                b["out"] = output_path(b.get("out", ""))
+                check_project_media(b["project"])
+                if any(str(Path(m["path"]).resolve()) == b["out"] for m in b["project"].get("media", {}).values()):
+                    raise Forbidden("No puedes sobrescribir un archivo usado en el proyecto")
                 return self._json({"job": start_job(job_export_v2, b)})
             if p == "/api/v2/transcribe":
+                check_project_media(b["project"])
                 return self._json({"job": start_job(job_transcribe_v2, b)})
             if p == "/api/projects/load":
                 f = PROJECTS / f"{safe_id(b['id'])}.json"
-                return self._json(json.loads(f.read_text(encoding="utf-8")))
+                d = json.loads(f.read_text(encoding="utf-8"))
+                d["thumb"] = clean_thumb(d.get("thumb"))
+                return self._json(d)
             if p == "/api/projects/save":
-                PROJECTS.mkdir(exist_ok=True)
+                PROJECTS.mkdir(parents=True, exist_ok=True)
+                proj = b["project"]
+                if not isinstance(proj, dict) or "tracks" not in proj:
+                    raise Forbidden("Proyecto inválido")
+                proj["thumb"] = clean_thumb(proj.get("thumb"))
                 f = PROJECTS / f"{safe_id(b['id'])}.json"
                 tmpf = f.with_suffix(".tmp")
-                tmpf.write_text(json.dumps(b["project"], ensure_ascii=False), encoding="utf-8")
+                tmpf.write_text(json.dumps(proj, ensure_ascii=False), encoding="utf-8")
                 os.replace(tmpf, f)
                 return self._json({"ok": True})
             if p == "/api/projects/delete":
                 (PROJECTS / f"{safe_id(b['id'])}.json").unlink(missing_ok=True)
                 return self._json({"ok": True})
             if p == "/api/proxy":
-                return self._json({"job": start_job(job_proxy, b["path"])})
-            if p == "/api/export":
-                return self._json({"job": start_job(job_export, b)})
-            if p == "/api/project/load":
-                pp = project_path(b["path"])
-                return self._json(read_json(pp, None) if pp.exists() else {"empty": True})
-            if p == "/api/project/save":
-                project_path(b["path"]).write_text(json.dumps(b["project"], ensure_ascii=False), encoding="utf-8")
-                return self._json({"ok": True})
+                return self._json({"job": start_job(job_proxy, str(media_path(b["path"])))})
             if p == "/api/templates/save":
+                tid = safe_id(str(b["id"]))
+                if not isinstance(b.get("template"), dict):
+                    raise Forbidden("Plantilla inválida")
                 custom = read_json(CUSTOM_TPL, {})
-                custom[b["id"]] = b["template"]
+                custom[tid] = b["template"]
                 CUSTOM_TPL.parent.mkdir(parents=True, exist_ok=True)
                 CUSTOM_TPL.write_text(json.dumps(custom, ensure_ascii=False, indent=2), encoding="utf-8")
                 return self._json({"ok": True})
             if p == "/api/templates/delete":
                 custom = read_json(CUSTOM_TPL, {})
-                custom.pop(b["id"], None)
+                custom.pop(str(b["id"]), None)
+                CUSTOM_TPL.parent.mkdir(parents=True, exist_ok=True)
                 CUSTOM_TPL.write_text(json.dumps(custom, ensure_ascii=False, indent=2), encoding="utf-8")
                 return self._json({"ok": True})
+            if p == "/api/music/get":
+                try:
+                    return self._json(music.fetch(str(b.get("id", "")), MUSIC))
+                except music.MusicError as e:
+                    return self._err(str(e), 502)
+            if p == "/api/music/favs":
+                favs = [x for x in (b.get("favs") or []) if isinstance(x, dict) and music.ID_RE.match(str(x.get("id", "")))][:500]
+                MUSIC.mkdir(parents=True, exist_ok=True)
+                FAVS.write_text(json.dumps(favs, ensure_ascii=False), encoding="utf-8")
+                return self._json({"ok": True})
             return self._err("Ruta desconocida", 404)
+        except Forbidden as e:
+            return self._err(str(e), 403)
+        except FileNotFoundError as e:
+            return self._err(f"No se encontró el archivo: {e}", 404)
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             return self._err(f"{type(e).__name__}: {e}", 500)
 
 
 def main():
+    global PORT
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     a = ap.parse_args()
+    PORT = a.port
     DATA.mkdir(parents=True, exist_ok=True)
     sync_fonts()
     os.chdir(WORK)
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    srv.daemon_threads = True
     print(f"CAPCRAFT_READY http://127.0.0.1:{a.port}", flush=True)
     srv.serve_forever()
 

@@ -2,7 +2,7 @@
 import {
   $, $$, state, on, emit, api, edit, beginLive, live, endLive, media, findClip, selectedClip, clipKind, clone, esc, norm, fmt,
   toast, modal, progressModal, pollJob, uid, clamp, mainTrack, duration, defaultText, TEXT_PRESETS, trackWithRoom, clipEnd,
-  rippleDelete, RATIOS, bridge
+  rippleDelete, RATIOS, bridge, safeColor, safeFont, cssUrl
 } from './core.js'
 import { seek, refreshAssNow, layout, markDirty } from './preview.js'
 import { addMediaAt } from './timeline.js'
@@ -18,20 +18,20 @@ export function renderLib () {
   body.innerHTML = ({ media: libMedia, audio: libAudio, text: libText, subs: libSubs, filters: libFilters, anims: libAnims }[libTab])()
   bindLib()
 }
-on('project', (d) => { if (!d?.live && ['media', 'audio', 'subs', 'filters', 'anims'].includes(libTab)) renderLib() })
+on('project', (d) => { if (!d?.live && (['media', 'subs', 'filters', 'anims'].includes(libTab) || (libTab === 'audio' && audioNav.kind === 'mine'))) renderLib() })
 on('select', () => { if (['filters', 'anims'].includes(libTab)) renderLib() })
 
-const thumbsUrl = (m) => `/api/thumbs?path=${encodeURIComponent(m.path)}&type=${m.type}&dur=${m.duration || 1}`
-const waveUrl = (m) => `/api/wave?path=${encodeURIComponent(m.path)}`
+const thumbsUrl = (m) => cssUrl(`/api/thumbs?path=${encodeURIComponent(m.path)}&type=${encodeURIComponent(m.type)}&dur=${Number(m.duration) || 1}`)
+const waveUrl = (m) => cssUrl(`/api/wave?path=${encodeURIComponent(m.path)}`)
 function mediaCard (m) {
   const isA = m.type === 'audio'
   const style = isA ? `background-image:url('${waveUrl(m)}')` : `background-image:url('${thumbsUrl(m)}');background-size:${m.type === 'image' ? 'cover' : '2400% 100%'};background-position:0 0`
-  return `<div class="mcard ${isA ? 'audio' : ''}" draggable="true" data-media="${m.id}" title="${esc(m.name)}">
+  return `<div class="mcard ${isA ? 'audio' : ''}" draggable="true" data-media="${esc(m.id)}" title="${esc(m.name)}">
     <div class="thumb" style="${style}"></div>
     <span class="kind">${{ video: '🎞', image: '🖼', audio: '♪' }[m.type]}</span>
-    ${m.type !== 'image' ? `<span class="dur">${fmt(m.duration)}</span>` : ''}
+    ${m.type !== 'image' ? `<span class="dur">${fmt(Number(m.duration) || 0)}</span>` : ''}
     <div class="name">${esc(m.name)}</div>
-    <button class="add" data-add="${m.id}" title="Agregar a la línea de tiempo">+</button>
+    <button class="add" data-add="${esc(m.id)}" title="Agregar a la línea de tiempo">+</button>
     ${m._busy ? `<div class="busy">${esc(m._busy)}</div>` : ''}</div>`
 }
 function libMedia () {
@@ -42,16 +42,124 @@ function libMedia () {
     <div class="media-grid">${list.map(mediaCard).join('') || '<p class="muted small">Aún no hay medios.</p>'}</div>
     <p class="muted small" style="margin-top:12px">Clic en <b>+</b> para agregar al final de la pista principal, o arrastra a la línea de tiempo para elegir la posición o crear una capa superpuesta.</p>`
 }
+// ---- audio: biblioteca de música por géneros (Openverse, solo licencias de uso comercial)
+let audioNav = { kind: 'genre', id: 'tendencias' }
+let musicGenres = null
+let musicFavs = null
+const musicCache = new Map() // clave -> {items, page, has_more}
+let musicQuery = ''
+let musicLoading = false
+let openGroups = { music: true, sfx: false }
+const previewAudio = new Audio(); previewAudio.preload = 'auto'
+let previewId = null
+previewAudio.addEventListener('ended', () => { previewId = null; markPlaying() })
+const mmss = (s) => { s = Math.round(Number(s) || 0); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` }
+
 function libAudio () {
   const list = Object.values(state.project.media).filter(m => m.type === 'audio')
-  const vids = Object.values(state.project.media).filter(m => m.type === 'video' && m.has_audio)
-  return `<button class="btn accent full" data-act="import-audio">⬆ Importar música o audio</button>
-    <h4>Audio del proyecto (${list.length})</h4>
-    <div class="media-grid" style="grid-template-columns:1fr">${list.map(mediaCard).join('') || '<p class="muted small">Importa MP3, WAV, M4A…</p>'}</div>
-    <h4>Consejos</h4>
-    <p class="muted small">• <b>+</b> agrega el audio en la posición del cabezal.<br>• Para usar solo el sonido de un video, selecciona el clip y pulsa <b>🔊✂ Separar audio</b> en la línea de tiempo.<br>• Volumen y fundidos: en el panel de la derecha.</p>
-    ${vids.length ? '' : ''}`
+  const g = musicGenres || { music: [], sfx: [] }
+  const navBtn = (kind, id, label) => `<button class="anav${audioNav.kind === kind && (audioNav.id || '') === (id || '') ? ' on' : ''}" data-nav="${kind}:${esc(id || '')}">${esc(label)}</button>`
+  const group = (key, title, items, kind) => `<button class="agroup" data-group="${key}">${title} <span>${openGroups[key] ? '▴' : '▾'}</span></button>
+    ${openGroups[key] ? items.map(x => navBtn(kind, x.id, x.name)).join('') : ''}`
+  const key = navKey()
+  let right = ''
+  if (audioNav.kind === 'mine') {
+    right = `<div class="alist">${list.map(m => `<div class="arow" data-media="${esc(m.id)}" draggable="true">
+        <div class="aicon">♪</div><div class="ainfo"><div class="at">${esc(m.title || m.name)}</div><div class="as">${esc(m.creator || 'Importado')} · ${mmss(m.duration)}</div></div>
+        <button class="abtn" data-add="${esc(m.id)}" title="Agregar en el cabezal">＋</button></div>`).join('') || '<p class="muted small">Aquí aparecen los audios que importes o agregues desde la biblioteca.</p>'}</div>`
+  } else {
+    const data = audioNav.kind === 'favs' ? { items: musicFavs || [], has_more: false } : musicCache.get(key)
+    const favIds = new Set((musicFavs || []).map(f => f.id))
+    const rows = (data?.items || []).map(t => `<div class="arow" data-track="${esc(t.id)}">
+        <button class="aplay" data-play="${esc(t.id)}" title="Escuchar">${previewId === t.id ? '⏸' : '▶'}</button>
+        <div class="ainfo"><div class="at">${esc(t.title)}</div><div class="as">${esc(t.creator)} · ${mmss(t.duration)} <span class="lic${t.attribution_required ? ' by' : ''}" title="${esc(t.credit)}">${esc(t.license_name)}</span></div></div>
+        <button class="abtn" data-fav="${esc(t.id)}" title="Favorito">${favIds.has(t.id) ? '★' : '☆'}</button>
+        <button class="abtn add" data-get="${esc(t.id)}" title="Agregar en el cabezal">＋</button></div>`).join('')
+    right = `<div class="asearch"><input type="text" id="musicQ" placeholder="Buscar música o efectos (en inglés funciona mejor)" value="${esc(musicQuery)}"></div>
+      <div class="ahead">${esc(navLabel())}</div>
+      <div class="alist">${rows || (musicLoading || !data ? '<p class="muted small">Cargando…</p>' : '<p class="muted small">Sin resultados.</p>')}
+      ${data?.has_more ? '<button class="btn small full" data-act="music-more">Cargar más</button>' : ''}</div>
+      <p class="muted small anote">Música con licencia Creative Commons <b>apta para uso comercial</b> (Openverse: Jamendo, Freesound, Wikimedia). Las marcadas <span class="lic by">CC BY</span> piden dar crédito al autor: al exportar te mostramos el texto para copiarlo en la descripción.</p>`
+  }
+  return `<div class="audio-lib"><nav class="anavs">
+      <button class="btn accent small full" data-act="import-audio">⬆ Importar</button>
+      ${navBtn('mine', '', `Tuyos (${list.length})`)}
+      ${navBtn('favs', '', `★ Favoritos${musicFavs ? ` (${musicFavs.length})` : ''}`)}
+      ${group('music', 'Música', g.music, 'genre')}
+      ${group('sfx', 'Efectos de sonido', g.sfx, 'genre')}
+    </nav><div class="amain">${right}</div></div>`
 }
+function navKey () { return audioNav.kind === 'genre' ? `${audioNav.id}|${musicQuery}` : audioNav.kind }
+function navLabel () {
+  if (musicQuery) return `Resultados: “${musicQuery}”`
+  const all = [...(musicGenres?.music || []), ...(musicGenres?.sfx || [])]
+  return audioNav.kind === 'favs' ? 'Favoritos' : (all.find(x => x.id === audioNav.id)?.name || '')
+}
+async function loadMusic (more = false) {
+  if (audioNav.kind !== 'genre') return
+  const key = navKey(); const cur = musicCache.get(key)
+  if (cur && !more) return
+  musicLoading = true
+  const page = more && cur ? cur.page + 1 : 1
+  try {
+    const qs = new URLSearchParams({ genre: audioNav.id, page: String(page) }); if (musicQuery) qs.set('q', musicQuery)
+    const r = await api.get(`/api/music/search?${qs}`)
+    musicCache.set(key, { items: [...(more && cur ? cur.items : []), ...r.items], page: r.page, has_more: r.has_more })
+  } catch (e) { toast(e.message, 'err'); if (!cur) musicCache.set(key, { items: [], page: 1, has_more: false }) }
+  musicLoading = false
+  if (libTab === 'audio' && navKey() === key) renderLib()
+}
+function findTrack (id) {
+  for (const v of musicCache.values()) { const t = v.items.find(x => x.id === id); if (t) return t }
+  return (musicFavs || []).find(x => x.id === id)
+}
+function markPlaying () { $$('[data-play]').forEach(b => { b.textContent = b.dataset.play === previewId ? '⏸' : '▶' }) }
+async function getTrack (id, btn) {
+  const old = btn?.textContent; if (btn) { btn.textContent = '…'; btn.disabled = true }
+  try { return await api.post('/api/music/get', { id }) } catch (e) { toast(e.message, 'err'); return null } finally { if (btn) { btn.textContent = old; btn.disabled = false } }
+}
+async function addTrack (id, btn) {
+  const meta = await getTrack(id, btn); if (!meta) return
+  const added = await importPaths([meta.path], { quiet: true })
+  const m = added[0]; if (!m) return
+  edit(() => { const mm = media(m.id); Object.assign(mm, { name: meta.title, title: meta.title, creator: meta.creator, credit: meta.credit, license_name: meta.license_name, attribution_required: meta.attribution_required, landing: meta.landing }) })
+  addMediaAt(m.id, state.time)
+  toast(`“${meta.title}” agregado en el cabezal.${meta.attribution_required ? ' Recuerda dar crédito al autor (te lo mostramos al exportar).' : ''}`, 'ok')
+}
+function bindAudio (body) {
+  if (!musicGenres) api.get('/api/music/genres').then(g => { musicGenres = g; if (libTab === 'audio') renderLib() }).catch(() => {})
+  if (!musicFavs) api.get('/api/music/favs').then(f => { musicFavs = f; if (libTab === 'audio') renderLib() }).catch(() => { musicFavs = [] })
+  if (audioNav.kind === 'genre' && !musicCache.get(navKey()) && !musicLoading) loadMusic()
+  body.querySelectorAll('[data-nav]').forEach(b => b.onclick = () => {
+    const [kind, id] = b.dataset.nav.split(':'); audioNav = { kind, id }; if (kind !== 'genre') musicQuery = ''
+    renderLib(); if (kind === 'genre') loadMusic()
+  })
+  body.querySelectorAll('[data-group]').forEach(b => b.onclick = () => { openGroups[b.dataset.group] = !openGroups[b.dataset.group]; renderLib() })
+  const q = $('#musicQ', body)
+  if (q) q.onkeydown = (e) => { if (e.key === 'Enter') { musicQuery = q.value.trim().slice(0, 80); if (audioNav.kind !== 'genre') audioNav = { kind: 'genre', id: 'tendencias' }; renderLib(); loadMusic() } }
+  body.querySelectorAll('[data-play]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.play
+    if (previewId === id) { previewAudio.pause(); previewId = null; markPlaying(); return }
+    const meta = await getTrack(id, b); if (!meta) return
+    previewAudio.src = `/media?path=${encodeURIComponent(meta.path)}`
+    previewId = id; markPlaying(); previewAudio.play().catch(() => {})
+  })
+  body.querySelectorAll('[data-fav]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.fav; const t = findTrack(id); if (!t) return
+    musicFavs = musicFavs || []
+    const i = musicFavs.findIndex(x => x.id === id)
+    if (i >= 0) musicFavs.splice(i, 1); else musicFavs.unshift(t)
+    try { await api.post('/api/music/favs', { favs: musicFavs }) } catch (e) { toast(e.message, 'err') }
+    renderLib()
+  })
+  body.querySelectorAll('[data-get]').forEach(b => b.onclick = () => addTrack(b.dataset.get, b))
+  body.querySelectorAll('.arow[data-media]').forEach(r => r.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/capcraft-media', r.dataset.media) }))
+}
+export function musicCredits () {
+  const used = new Set(); for (const t of state.project.tracks) for (const c of t.clips) if (c.mediaId) used.add(c.mediaId)
+  return Object.values(state.project.media).filter(m => used.has(m.id) && m.credit && m.attribution_required).map(m => m.credit)
+}
+
 function libText () {
   return `<button class="btn accent full" data-text="basico">＋ Agregar texto</button>
     <h4>Estilos</h4>
@@ -65,13 +173,16 @@ function libText () {
 
 // ---- subtítulos
 const ANIMS_SUB = [['pop', 'Pop'], ['karaoke', 'Karaoke'], ['box', 'Caja'], ['bounce', 'Rebote'], ['reveal', 'Máquina de escribir'], ['blur_in', 'Desenfoque'], ['rainbow', 'Arcoíris'], ['one_word', 'Una palabra'], ['dim', 'Línea tenue']]
-export function tplSampleHTML (t) {
+export function tplSampleHTML (raw) {
+  const t = { ...raw, font: safeFont(raw.font), color: safeColor(raw.color), highlight: raw.highlight && safeColor(raw.highlight, '#FFE600'),
+    outline_color: safeColor(raw.outline_color, '#000000'), base_color: safeColor(raw.base_color), active_text: safeColor(raw.active_text),
+    palette: Array.isArray(raw.palette) ? raw.palette.map(c => safeColor(c)) : null, outline: Number(raw.outline) || 0 }
   const words = t.uppercase ? ['HOLA', 'MUNDO'] : ['Hola', 'mundo']
-  const stroke = `-webkit-text-stroke:${Math.min(3, (t.outline || 0) / 2)}px ${t.outline_color || '#000'};paint-order:stroke fill`
-  const hl = t.highlight || (t.palette ? t.palette[1] : t.color); const a = t.animation
+  const stroke = `-webkit-text-stroke:${Math.min(3, t.outline / 2)}px ${t.outline_color};paint-order:stroke fill`
+  const hl = t.highlight || (t.palette ? t.palette[1] || t.color : t.color); const a = t.animation
   let w1 = `<span style="color:${t.color}">${words[0]}</span>`; let w2 = `<span style="color:${hl}">${words[1]}</span>`
-  if (a === 'box') w2 = `<span style="color:${t.active_text || '#fff'};background:${hl};border-radius:5px;padding:0 4px;-webkit-text-stroke:0">${words[1]}</span>`
-  if (a === 'karaoke') w2 = `<span style="color:${t.base_color || '#fff'}">${words[1]}</span>`
+  if (a === 'box') w2 = `<span style="color:${t.active_text};background:${hl};border-radius:5px;padding:0 4px;-webkit-text-stroke:0">${words[1]}</span>`
+  if (a === 'karaoke') w2 = `<span style="color:${t.base_color}">${words[1]}</span>`
   if (a === 'rainbow' || a === 'one_word') { const p = t.palette || [t.color]; w1 = `<span style="color:${p[0]}">${words[0]}</span>`; w2 = a === 'one_word' ? '' : `<span style="color:${p[1 % p.length]}">${words[1]}</span>` }
   if (a === 'dim') w1 = `<span style="color:${t.color};opacity:.45">${words[0]}</span>`
   return `<span style="font-family:'${t.font}';font-size:19px;${stroke}">${w1} ${w2}</span>`
@@ -79,7 +190,7 @@ export function tplSampleHTML (t) {
 function libSubs () {
   const sub = state.project.subtitles
   const tpls = state.templates
-  const card = (id, t, custom) => `<div class="preset${sub.templateId === id ? ' active' : ''}" data-tpl="${id}">${tplSampleHTML(t)}<span class="lbl">${esc(t.name || id)}</span>${custom ? `<button class="del" data-deltpl="${id}">✕</button>` : ''}</div>`
+  const card = (id, t, custom) => `<div class="preset${sub.templateId === id ? ' active' : ''}" data-tpl="${esc(id)}">${tplSampleHTML(t)}<span class="lbl">${esc(t.name || id)}</span>${custom ? `<button class="del" data-deltpl="${esc(id)}">✕</button>` : ''}</div>`
   return `<h4>Subtítulos automáticos</h4>
     <div class="field">Idioma<select id="subLang"><option value="es">Español</option><option value="en">Inglés</option><option value="pt">Portugués</option><option value="">Detectar</option></select></div>
     <div class="field">Precisión<select id="subModel"><option value="small">Rápida (small)</option><option value="medium" selected>Recomendada (medium)</option><option value="large-v3">Máxima (large-v3)</option></select></div>
@@ -129,6 +240,7 @@ function libAnims () {
 function bindLib () {
   const body = $('#libBody')
   body.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => libAction(b.dataset.act)))
+  if (libTab === 'audio') bindAudio(body)
   body.querySelectorAll('.mcard').forEach(card => {
     card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/capcraft-media', card.dataset.media); e.dataTransfer.effectAllowed = 'copy' })
     card.addEventListener('dblclick', () => quickAdd(card.dataset.media))
@@ -192,6 +304,7 @@ async function deleteTemplate (id) {
 async function libAction (act) {
   if (act === 'import') return importDialog()
   if (act === 'import-audio') return importDialog()
+  if (act === 'music-more') return loadMusic(true)
   if (act === 'transcribe') return transcribe()
   if (act === 'sub-style') { state.sel = { kind: 'subs' }; emit('select'); return }
   if (act === 'sub-clear') {
@@ -216,7 +329,7 @@ export async function importDialog () {
   const paths = await bridge.openMedia(); if (paths?.length) importPaths(paths)
 }
 export function importFiles (files) { importPaths(files.map(f => bridge ? bridge.pathForFile(f) : f.path).filter(Boolean)) }
-export async function importPaths (paths) {
+export async function importPaths (paths, { quiet = false } = {}) {
   const added = []
   for (const path of paths) {
     try {
@@ -229,7 +342,7 @@ export async function importPaths (paths) {
       if (m.type === 'video') checkPlayable(m)
     } catch (e) { toast(`No se pudo importar ${path.split(/[\\/]/).pop()}: ${e.message}`, 'err') }
   }
-  if (added.length) toast(`${added.length} archivo(s) importado(s).`, 'ok')
+  if (added.length && !quiet) toast(`${added.length} archivo(s) importado(s).`, 'ok')
   return added
 }
 function checkPlayable (m) {
@@ -332,7 +445,7 @@ function slider (parent, label, get, set, { min, max, step = 0.01, show = (v) =>
 }
 function color (parent, label, get, set) {
   const row = document.createElement('label'); row.className = 'prow2'
-  row.innerHTML = `${label}<input type="color" value="${get() || '#ffffff'}">`
+  row.innerHTML = `${label}<input type="color" value="${safeColor(get(), '#FFFFFF')}">`
   const i = row.children[0]
   i.addEventListener('input', () => { beginLive(); set(i.value.toUpperCase()); live() }); i.addEventListener('change', () => endLive())
   parent.appendChild(row)
@@ -345,7 +458,7 @@ function check (parent, label, get, set) {
 }
 function select (parent, label, opts, get, set) {
   const row = document.createElement('div'); row.className = 'field'
-  row.innerHTML = `${label}<select>${opts.map(([k, n]) => `<option value="${k}" ${String(get()) === String(k) ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`
+  row.innerHTML = `${label}<select>${opts.map(([k, n]) => `<option value="${esc(k)}" ${String(get()) === String(k) ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`
   row.children[0].addEventListener('change', (e) => edit(() => set(e.target.value)))
   parent.appendChild(row); return row
 }
@@ -363,7 +476,7 @@ function pProject (body) {
   const s = sect(body, 'Proyecto')
   const kv = document.createElement('div'); kv.className = 'kv'
   const counts = p.tracks.reduce((a, t) => a + t.clips.length, 0)
-  kv.innerHTML = `<span>Nombre</span><b>${esc(p.name)}</b><span>Lienzo</span><b>${p.canvas.width}×${p.canvas.height}</b><span>Duración</span><b>${fmt(d)}</b><span>Clips</span><b>${counts}</b><span>Medios</span><b>${Object.keys(p.media).length}</b><span>Subtítulos</span><b>${p.subtitles.words.length ? p.subtitles.words.length + ' palabras' : '—'}</b>`
+  kv.innerHTML = `<span>Nombre</span><b>${esc(p.name)}</b><span>Lienzo</span><b>${Number(p.canvas.width)}×${Number(p.canvas.height)}</b><span>Duración</span><b>${fmt(d)}</b><span>Clips</span><b>${counts}</b><span>Medios</span><b>${Object.keys(p.media).length}</b><span>Subtítulos</span><b>${p.subtitles.words.length ? p.subtitles.words.length + ' palabras' : '—'}</b>`
   s.appendChild(kv)
   const s2 = sect(body, 'Formato')
   const cur = Object.entries(RATIOS).find(([, v]) => v[0] === p.canvas.width && v[1] === p.canvas.height)?.[0] || 'custom'
@@ -485,14 +598,14 @@ function pSubText (body) {
   const kw = new Set(sub.keywords)
   const s = sect(body, `Línea ${li + 1} de ${state.lines.length}`, `<span><button class="btn tiny" id="lnPrev">◀</button> <button class="btn tiny" id="lnNext">▶</button></span>`)
   const words = document.createElement('div'); words.className = 'words'
-  words.innerHTML = idxs.map(i => { const w = sub.words[i]; return `<span class="w${i === wordSel ? ' sel' : ''}${kw.has(norm(w.text)) ? ' kw' : ''}${w.br ? ' br' : ''}${w.join ? ' join' : ''}" data-i="${i}">${esc(w.text)}</span>` }).join('')
+  words.innerHTML = idxs.map(i => { const w = sub.words[i]; return `<span class="w${i === wordSel ? ' sel' : ''}${kw.has(norm(w.text)) ? ' kw' : ''}${w.br ? ' br' : ''}${w.join ? ' join' : ''}" data-i="${Number(i)}">${esc(w.text)}</span>` }).join('')
   words.onclick = (e) => { const el = e.target.closest('.w'); if (!el) return; wordSel = +el.dataset.i; seek(sub.words[wordSel].start + 0.01); renderProps() }
   s.appendChild(words)
   $('#lnPrev', s).onclick = () => goLine(li - 1); $('#lnNext', s).onclick = () => goLine(li + 1)
   const w = sub.words[wordSel]
   const insp = document.createElement('div'); insp.className = 'insp'
   insp.innerHTML = `<input type="text" id="wText" value="${esc(w.text)}">
-    <div class="times">Inicio <input type="number" id="wStart" step="0.01" value="${w.start.toFixed(2)}"> Final <input type="number" id="wEnd" step="0.01" value="${w.end.toFixed(2)}">
+    <div class="times">Inicio <input type="number" id="wStart" step="0.01" value="${(+w.start || 0).toFixed(2)}"> Final <input type="number" id="wEnd" step="0.01" value="${(+w.end || 0).toFixed(2)}">
     <button class="btn tiny" id="wNow" title="Inicio = cabezal">⏱</button></div>
     <div class="row gap wrap">
       <button class="btn tiny${w.br ? ' on' : ''}" id="wBr">⏎ Partir después</button>

@@ -50,7 +50,16 @@ jobs:
         if: steps.ver.outputs.skip != 'true'
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          $base = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
+          Invoke-WebRequest -Uri "$base/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Invoke-WebRequest -Uri "$base/checksums.sha256" -OutFile checksums.sha256
+          # verifica que el binario descargado sea exactamente el publicado (cadena de suministro)
+          $line = Select-String -Path checksums.sha256 -Pattern "ffmpeg-master-latest-win64-gpl.zip" | Select-Object -First 1
+          if (-not $line) { throw "No se encontró la suma de verificación de FFmpeg" }
+          $expected = ($line.Line -split '\s+')[0].ToLower()
+          $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw "Suma SHA-256 de FFmpeg no coincide: $actual vs $expected" }
+          Write-Host "FFmpeg verificado: $actual"
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
           New-Item -ItemType Directory -Force ffmpeg | Out-Null
           Get-ChildItem ffmpeg_tmp -Recurse -Include ffmpeg.exe,ffprobe.exe | Copy-Item -Destination ffmpeg

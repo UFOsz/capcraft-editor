@@ -29,6 +29,11 @@ export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9
 export const clamp = (v, a, b) => Math.min(b, Math.max(a, v))
 export const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) } }
 export const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+// Saneamiento de datos que vienen de proyectos/plantillas (pueden ser archivos de terceros)
+export const safeColor = (v, d = '#FFFFFF') => (typeof v === 'string' && /^#?[0-9a-fA-F]{6}$/.test(v)) ? (v[0] === '#' ? v : '#' + v) : d
+export const safeFont = (v, d = 'Anton') => String(v ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').slice(0, 60).trim() || d
+export const cssUrl = (u) => String(u).replace(/['"()\\\s<>]/g, c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+export const safeThumb = (t) => (typeof t === 'string' && /^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(t)) ? t : null
 export const norm = (s) => s.toLowerCase().replace(/[,.;:¿?¡!…"'«»“”]/g, '').trim()
 export function fmtTC (t, fps = 30) {
   t = Math.max(0, t || 0)

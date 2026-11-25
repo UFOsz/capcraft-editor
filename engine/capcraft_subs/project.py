@@ -21,7 +21,7 @@ import math
 import subprocess
 from pathlib import Path
 
-from .ass_render import AssRenderer, ass_color, ass_time, esc, inline_color
+from .ass_render import AssRenderer, ass_color, ass_time, esc, inline_color, safe_color, safe_font
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -111,12 +111,12 @@ def text_event(c: dict, W: int, H: int, layer: int) -> str:
     size = float(st.get("size", 90)) * sc
     x, y = float(c.get("x", 0.5)) * W, float(c.get("y", 0.5)) * H
     dur_ms = int(float(c["dur"]) * 1000)
-    tags = [f"\\fn{st.get('font', 'Anton')}", f"\\fs{size:.1f}", f"\\c{inline_color(st.get('color', '#FFFFFF'))}"]
+    tags = [f"\\fn{safe_font(st.get('font'), 'Anton')}", f"\\fs{size:.1f}", f"\\c{inline_color(safe_color(st.get('color'), '#FFFFFF'))}"]
     if st.get("box"):
-        tags += [f"\\3c{inline_color(st.get('box_color', '#000000'))}", f"\\bord{size * 0.28:.1f}", "\\shad0"]
+        tags += [f"\\3c{inline_color(safe_color(st.get('box_color'), '#000000'))}", f"\\bord{size * 0.28:.1f}", "\\shad0"]
     else:
-        tags += [f"\\3c{inline_color(st.get('outline_color', '#000000'))}", f"\\bord{float(st.get('outline', 0)) * sc:.1f}",
-                 f"\\shad{float(st.get('shadow', 0)) * sc:.1f}", f"\\4c{inline_color(st.get('shadow_color', '#000000'))}"]
+        tags += [f"\\3c{inline_color(safe_color(st.get('outline_color'), '#000000'))}", f"\\bord{float(st.get('outline', 0)) * sc:.1f}",
+                 f"\\shad{float(st.get('shadow', 0)) * sc:.1f}", f"\\4c{inline_color(safe_color(st.get('shadow_color'), '#000000'))}"]
     if st.get("spacing"):
         tags.append(f"\\fsp{float(st['spacing']):.1f}")
     rot = float(c.get("rotation", 0) or 0)
@@ -171,7 +171,7 @@ def text_event(c: dict, W: int, H: int, layer: int) -> str:
 
 
 def build_ass(p: dict, builtin_templates: dict) -> tuple[str, list]:
-    W, H = int(p["canvas"]["width"]), int(p["canvas"]["height"])
+    W, H = canvas_dims(p)
     sub = p.get("subtitles") or {}
     tpl = sub.get("template") or builtin_templates.get("hormozi_pop") or next(iter(builtin_templates.values()))
     r = AssRenderer(tpl, W, H, sub.get("keywords") or [])
@@ -228,10 +228,24 @@ def anim_terms(clip: dict, start: float, dur: float, W: int, H: int):
     return "+".join(xs), "+".join(ys), ("*".join(zoom) if zoom else None), zmax, fades
 
 
+def canvas_dims(p: dict) -> tuple[int, int]:
+    c = p.get("canvas") or {}
+    return int(min(8192, max(16, float(c.get("width", 1080))))), int(min(8192, max(16, float(c.get("height", 1920)))))
+
+
+def local_file(path) -> str:
+    """Solo archivos locales existentes (nada de URLs ni protocolos especiales de FFmpeg)."""
+    s = str(path or "")
+    if not s or "://" in s or "\x00" in s or s.startswith(("\\\\", "//")) or not Path(s).is_file():
+        raise ValueError(f"Archivo no disponible: {Path(s).name}")
+    return s
+
+
 def build_export(p: dict, ass_file: str | None, out: str, quality: str = "alta", res_scale: float = 1.0,
                  audio_only: bool = False, include_audio_tracks: bool = True, video_audio: bool = True):
-    W, H = int(p["canvas"]["width"]), int(p["canvas"]["height"])
-    fps = float(p["canvas"].get("fps", 30))
+    W, H = canvas_dims(p)
+    fps = min(120.0, max(1.0, float(p["canvas"].get("fps", 30))))
+    res_scale = min(1.0, max(0.1, float(res_scale)))
     total = project_duration(p)
     media = p.get("media", {})
     inputs: list[str] = []
@@ -241,11 +255,14 @@ def build_export(p: dict, ass_file: str | None, out: str, quality: str = "alta",
 
     def add_input(args: list[str]) -> int:
         nonlocal n_in
+        i = args.index("-i")
+        args[i + 1] = local_file(args[i + 1])
+        args = args[:i] + ["-protocol_whitelist", "file"] + args[i:]
         inputs.extend(args)
         n_in += 1
         return n_in - 1
 
-    bg = (p["canvas"].get("background") or "#000000").lstrip("#")
+    bg = safe_color(p["canvas"].get("background"), "#000000").lstrip("#")
     if not audio_only:
         fc.append(f"color=c=0x{bg}:s={W}x{H}:r={fps:g}:d={total:.3f},format=rgba[base0]")
     cur = "base0"

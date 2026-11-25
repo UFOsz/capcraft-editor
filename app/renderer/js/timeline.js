@@ -1,7 +1,7 @@
 // Línea de tiempo multipista estilo CapCut.
 import {
   $, $$, state, on, emit, media, clipEnd, duration, clamp, findClip, getTrack, mainTrack, beginLive, live, endLive, edit,
-  overlaps, addTrack, maxDur, esc, clipKind, fmt, defaultVisual, defaultAudio, trackWithRoom, compactMain
+  overlaps, addTrack, maxDur, esc, clipKind, fmt, defaultVisual, defaultAudio, trackWithRoom, compactMain, cssUrl
 } from './core.js'
 import { seek, pause } from './preview.js'
 
@@ -47,8 +47,8 @@ function rowsModel () {
   for (const t of p.tracks) out.push({ id: t.id, kind: t.kind, track: t, h: t.main ? ROW_H.main : ROW_H[t.kind] })
   return out
 }
-function thumbsUrl (m) { return `/api/thumbs?path=${encodeURIComponent(m.path)}&type=${m.type}&dur=${m.duration || 1}` }
-function waveUrl (m) { return `/api/wave?path=${encodeURIComponent(m.path)}` }
+function thumbsUrl (m) { return cssUrl(`/api/thumbs?path=${encodeURIComponent(m.path)}&type=${encodeURIComponent(m.type)}&dur=${Number(m.duration) || 1}`) }
+function waveUrl (m) { return cssUrl(`/api/wave?path=${encodeURIComponent(m.path)}`) }
 
 function clipHTML (c, track) {
   const kind = clipKind(c); const m = media(c.mediaId)
@@ -60,14 +60,14 @@ function clipHTML (c, track) {
   } else if (m && kind === 'image') bg = `<div class="bgimg" style="background-image:url('${thumbsUrl(m)}')"></div>`
   const label = kind === 'text' ? esc(String(c.text).split('\n')[0]) : esc(m ? m.name : '¿?')
   const badges = []
-  if (c.speed && c.speed !== 1) badges.push(`${c.speed}x`)
+  if (c.speed && c.speed !== 1) badges.push(`${Number(c.speed) || 1}x`)
   if (c.muted) badges.push('🔇')
   if (c.filter && c.filter !== 'none') badges.push('◐')
   if ((c.animIn && c.animIn.type !== 'none') || (c.animOut && c.animOut.type !== 'none')) badges.push('✦')
   const sel = state.sel?.kind === 'clip' && state.sel.id === c.id
-  const fi = c.fadeIn ? `<div class="fadeL" style="width:${c.fadeIn * state.pps}px"></div>` : ''
-  const fo = c.fadeOut ? `<div class="fadeR" style="width:${c.fadeOut * state.pps}px"></div>` : ''
-  return `<div class="clip ${kind}${sel ? ' sel' : ''}" data-id="${c.id}" style="left:${X(c.start)}px;width:${Math.max(4, c.dur * state.pps)}px">
+  const fi = c.fadeIn ? `<div class="fadeL" style="width:${(+c.fadeIn || 0) * state.pps}px"></div>` : ''
+  const fo = c.fadeOut ? `<div class="fadeR" style="width:${(+c.fadeOut || 0) * state.pps}px"></div>` : ''
+  return `<div class="clip ${kind}${sel ? ' sel' : ''}" data-id="${esc(c.id)}" style="left:${X(+c.start || 0)}px;width:${Math.max(4, (+c.dur || 0) * state.pps)}px">
     ${bg}${fi}${fo}<div class="lab">${kind === 'text' ? 'T ' : ''}${label}${kind !== 'text' ? ` <span style="opacity:.7">${fmt(c.dur)}</span>` : ''}</div>
     <div class="badges">${badges.join(' ')}</div><div class="hl"></div><div class="hr"></div></div>`
 }
@@ -101,10 +101,10 @@ export function render () {
       continue
     }
     const t = r.track
-    html += `<div class="trow ${t.kind}${t.main ? ' main' : ''}" data-row="${t.id}" data-kind="${t.kind}" style="height:${r.h}px">${t.clips.map(c => clipHTML(c, t)).join('')}</div>`
+    html += `<div class="trow ${t.kind}${t.main ? ' main' : ''}" data-row="${esc(t.id)}" data-kind="${esc(t.kind)}" style="height:${r.h}px">${t.clips.map(c => clipHTML(c, t)).join('')}</div>`
     const name = t.main ? '🎬 Principal' : { video: '▣ Capa', audio: '♪ Audio', text: 'T Texto' }[t.kind]
-    const eye = t.kind !== 'audio' ? `<button data-act="hide" data-track="${t.id}" class="${t.hidden ? 'off' : ''}" title="Ocultar">${t.hidden ? '⊘' : '👁'}</button>` : ''
-    const mute = t.kind !== 'text' ? `<button data-act="mute" data-track="${t.id}" class="${t.muted ? 'off' : ''}" title="Silenciar pista">${t.muted ? '🔇' : '🔊'}</button>` : ''
+    const eye = t.kind !== 'audio' ? `<button data-act="hide" data-track="${esc(t.id)}" class="${t.hidden ? 'off' : ''}" title="Ocultar">${t.hidden ? '⊘' : '👁'}</button>` : ''
+    const mute = t.kind !== 'text' ? `<button data-act="mute" data-track="${esc(t.id)}" class="${t.muted ? 'off' : ''}" title="Silenciar pista">${t.muted ? '🔇' : '🔊'}</button>` : ''
     hh += `<div class="thead" style="height:${r.h}px"><span class="tk">${name}</span>${eye}${mute}</div>`
   }
   rows.innerHTML = html + (p.tracks.every(t => !t.clips.length) ? '<div class="tl-empty">Arrastra aquí videos, fotos o audio desde el panel Multimedia</div>' : '')

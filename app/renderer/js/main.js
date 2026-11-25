@@ -2,11 +2,11 @@
 import {
   $, $$, state, on, emit, api, edit, undo, redo, canUndo, canRedo, resetHistory, newProject, findClip, selectedClip, splitClip,
   clipKind, mainTrack, duration, clone, uid, toast, modal, progressModal, pollJob, esc, fmt, fmtTC, bridge, RATIOS, trackWithRoom,
-  clipEnd, overlaps, addTrack, defaultAudio, debounce
+  clipEnd, overlaps, addTrack, defaultAudio, debounce, safeThumb, safeFont
 } from './core.js'
 import { layout, play, pause, toggle, seek, initSubs, thumbnail, dropUnused, refreshAssNow } from './preview.js'
 import { render as renderTimeline, fit } from './timeline.js'
-import { renderLib, renderProps, importFiles, importDialog } from './panels.js'
+import { renderLib, renderProps, importFiles, importDialog, musicCredits } from './panels.js'
 
 // ---------------------------------------------------------------- guardado automático
 let saving = false
@@ -53,10 +53,10 @@ async function showHome () {
   pause()
   if (state.project) await saveNow()
   const list = await api.get('/api/projects')
-  $('#homeList').innerHTML = list.length ? list.map(p => `<div class="pcard" data-id="${p.id}">
-      <div class="pth" style="${p.thumb ? `background-image:url('${p.thumb}')` : ''}">${p.thumb ? '' : '🎬'}</div>
-      <div class="pinfo"><div class="pname">${esc(p.name)}</div><div class="muted small">${fmt(p.duration)} · ${new Date(p.modified * 1000).toLocaleDateString('es-CO')}</div></div>
-      <button class="pdel" data-del="${p.id}" title="Eliminar proyecto">🗑</button></div>`).join('') : '<p class="muted">Todavía no tienes proyectos. Crea el primero.</p>'
+  $('#homeList').innerHTML = list.length ? list.map(p => `<div class="pcard" data-id="${esc(p.id)}">
+      <div class="pth" style="${safeThumb(p.thumb) ? `background-image:url('${safeThumb(p.thumb)}')` : ''}">${safeThumb(p.thumb) ? '' : '🎬'}</div>
+      <div class="pinfo"><div class="pname">${esc(p.name)}</div><div class="muted small">${fmt(Number(p.duration) || 0)} · ${new Date(p.modified * 1000).toLocaleDateString('es-CO')}</div></div>
+      <button class="pdel" data-del="${esc(p.id)}" title="Eliminar proyecto">🗑</button></div>`).join('') : '<p class="muted">Todavía no tienes proyectos. Crea el primero.</p>'
   $('#home').hidden = false
 }
 $('#homeList').addEventListener('click', async (e) => {
@@ -221,6 +221,7 @@ $('#btnExport').onclick = async () => {
   if (!state.project) return
   if (!state.project.tracks.some(t => t.clips.length)) return toast('La línea de tiempo está vacía.', 'err')
   const p = state.project; const W = p.canvas.width; const H = p.canvas.height; const short = Math.min(W, H)
+  const credits = musicCredits()
   const resOpts = [[1, `Original (${W}×${H})`], ...(short > 720 ? [[720 / short, `720p (${Math.round(W * 720 / short)}×${Math.round(H * 720 / short)})`]] : []), ...(short > 480 ? [[480 / short, '480p (liviano)']] : [])]
   const go = await modal({
     title: 'Exportar',
@@ -228,7 +229,11 @@ $('#btnExport').onclick = async () => {
       <div class="field">Resolución<select id="exRes">${resOpts.map(([v, n]) => `<option value="${v}">${n}</option>`).join('')}</select></div>
       <div class="field">Calidad<select id="exQ"><option value="alta">Alta (recomendada)</option><option value="media">Media</option><option value="liviana">Liviana</option></select></div>
       <label class="check"><input id="exSrt" type="checkbox" ${p.subtitles.words.length ? 'checked' : ''}> Guardar también los subtítulos en .srt</label>
-      <p class="small">Duración: <b>${fmt(duration())}</b> · ${p.canvas.fps} fps · MP4 (H.264 + AAC)</p>`,
+      <p class="small">Duración: <b>${fmt(duration())}</b> · ${Number(p.canvas.fps)} fps · MP4 (H.264 + AAC)</p>
+      ${credits.length ? `<div class="field" style="margin-top:10px">Créditos de música (pégalos en la descripción del video)
+        <textarea id="exCredits" readonly rows="4">${esc(credits.join('\n'))}</textarea>
+        <button class="btn small" id="exCopy" type="button">📋 Copiar créditos</button></div>` : ''}`,
+    onOpen: () => { const b = $('#exCopy'); if (b) b.onclick = () => navigator.clipboard.writeText($('#exCredits').value).then(() => toast('Créditos copiados.', 'ok')).catch(() => { $('#exCredits').select(); document.execCommand('copy') }) },
     buttons: [{ label: 'Cancelar', value: null, cls: 'ghost' }, { label: 'Exportar…', value: () => ({ name: $('#exName').value.trim() || p.name, res: +$('#exRes').value, q: $('#exQ').value, srt: $('#exSrt').checked }), cls: 'accent' }]
   })
   if (!go) return
@@ -275,7 +280,7 @@ window.__checkUpdates = (m) => { manualCheck = m; return _cu(m) }
 async function boot () {
   try {
     state.fonts = await api.get('/api/fonts')
-    const css = state.fonts.map(f => `@font-face{font-family:'${f.family}';src:url('/fonts/${encodeURIComponent(f.file)}')}`).join('\n')
+    const css = state.fonts.map(f => `@font-face{font-family:'${safeFont(f.family)}';src:url('/fonts/${encodeURIComponent(f.file).replace(/'/g, '%27')}')}`).join('\n')
     const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st)
     state.fonts.forEach(f => document.fonts.load(`40px "${f.family}"`).catch(() => {}))
     state.templates = await api.get('/api/templates')

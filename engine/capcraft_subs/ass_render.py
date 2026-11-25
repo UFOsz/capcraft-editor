@@ -25,6 +25,48 @@ from dataclasses import dataclass
 PUNCT_STRIP = ",.;:¿?¡!…\"'«»“”"
 
 
+# ---------- saneamiento (los proyectos y plantillas pueden venir de archivos de terceros) ----------
+HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+COLOR_KEYS = ("color", "highlight", "outline_color", "shadow_color", "base_color", "active_text")
+NUM_KEYS = {"size": (8, 600), "outline": (0, 60), "shadow": (0, 60), "box_outline": (0, 120), "max_words": (1, 50),
+            "max_chars": (1, 200), "margin_v": (0, 5000), "pop_scale": (50, 400), "pop_ms": (1, 5000), "spacing": (-50, 200),
+            "hold": (0, 10), "max_gap": (0, 10), "scale": (0.05, 20), "rotation": (-360, 360), "pos_x": (-2, 3), "pos_y": (-2, 3)}
+
+
+def safe_color(v, default="#FFFFFF") -> str:
+    return v if isinstance(v, str) and HEX_RE.match(v) else default
+
+
+def safe_font(v, default="Arial") -> str:
+    s = re.sub(r"[{}\\,;\r\n]", "", str(v or ""))[:60].strip()
+    return s or default
+
+
+def sanitize_template(t: dict) -> dict:
+    t = dict(t or {})
+    t["font"] = safe_font(t.get("font"), "Anton")
+    for k in COLOR_KEYS:
+        if k in t:
+            t[k] = safe_color(t[k], "#FFFFFF" if k != "outline_color" and k != "shadow_color" else "#000000")
+    if "palette" in t:
+        t["palette"] = [safe_color(c) for c in (t["palette"] or [])[:12] if isinstance(c, str)] or ["#FFFFFF"]
+    for k, (lo, hi) in NUM_KEYS.items():
+        if k in t and t[k] is not None:
+            try:
+                t[k] = min(hi, max(lo, float(t[k])))
+            except (TypeError, ValueError):
+                t.pop(k)
+    for k in ("max_words", "max_chars"):
+        if k in t:
+            t[k] = int(t[k])
+    if "dim_alpha" in t and not re.match(r"^[0-9A-Fa-f]{2}$", str(t["dim_alpha"])):
+        t["dim_alpha"] = "90"
+    t["animation"] = t.get("animation") if t.get("animation") in (
+        "pop", "karaoke", "box", "bounce", "reveal", "blur_in", "rainbow", "one_word", "dim") else "pop"
+    t["position"] = t.get("position") if t.get("position") in ("lower", "center", "upper") else "lower"
+    return t
+
+
 # ---------- utilidades de color y tiempo ----------
 def ass_color(hex_rgb: str, alpha: str = "00") -> str:
     """#RRGGBB -> &HAABBGGRR (formato ASS)."""
@@ -97,8 +139,8 @@ def group_words(words: list[dict], max_words: int = 3, max_chars: int = 20,
 class AssRenderer:
     def __init__(self, tpl: dict, width: int = 1080, height: int = 1920,
                  keywords: list[str] | None = None):
-        self.t = tpl
-        self.w, self.h = width, height
+        self.t = sanitize_template(tpl)
+        self.w, self.h = int(min(8192, max(16, width))), int(min(8192, max(16, height)))
         # Las plantillas están diseñadas para 1080x1920; se escalan al video real.
         self.k = min(width, height) / 1080
         self.kv = height / 1920

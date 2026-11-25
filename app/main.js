@@ -1,12 +1,17 @@
 // Capcraft Editor — proceso principal de Electron.
 // Arranca el motor (Python en desarrollo, capcraft-engine.exe en la app instalada), abre la ventana
 // y se encarga de las actualizaciones automáticas desde GitHub Releases.
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, shell, session } = require('electron')
 const { spawn, execFile, execFileSync } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const net = require('net')
 const os = require('os')
+const crypto = require('crypto')
+
+// Token secreto por sesión: solo esta ventana puede usar el servidor local del motor.
+const TOKEN = crypto.randomBytes(32).toString('base64url')
+let ORIGIN = ''
 
 const PACKAGED = app.isPackaged
 const DEV_ENGINE = path.join(__dirname, '..', 'engine')
@@ -53,7 +58,7 @@ function startEngine (port) {
     const c = engineCommand(port)
     engineProc = spawn(c.cmd, c.args, {
       cwd: c.cwd, windowsHide: true,
-      env: { ...process.env, ...c.env, PYTHONIOENCODING: 'utf-8', CAPCRAFT_VERSION: app.getVersion() }
+      env: { ...process.env, ...c.env, PYTHONIOENCODING: 'utf-8', CAPCRAFT_VERSION: app.getVersion(), CAPCRAFT_TOKEN: TOKEN }
     })
     const timer = setTimeout(() => reject(new Error('El motor no respondió en 60 s.\n\n' + log)), 60000)
     engineProc.stdout.on('data', d => {
@@ -120,6 +125,26 @@ function setupUpdater () {
   setInterval(check, 2 * 60 * 60 * 1000)
 }
 
+// ---------------------------------------------------------------- seguridad
+function openSafe (url) {
+  try { const u = new URL(url); if (u.protocol === 'https:') shell.openExternal(u.toString()) } catch {}
+}
+function hardenSession () {
+  const ses = session.defaultSession
+  // sin cámara, micrófono, ubicación, notificaciones, etc. Solo pantalla completa y portapapeles.
+  const allowed = new Set(['fullscreen', 'clipboard-sanitized-write'])
+  ses.setPermissionRequestHandler((wc, perm, cb) => cb(allowed.has(perm)))
+  ses.setPermissionCheckHandler((wc, perm) => allowed.has(perm))
+  ses.on('will-download', (e) => e.preventDefault())
+}
+// los mensajes IPC solo se aceptan desde la ventana de la app
+function trusted (event) {
+  try { return !!ORIGIN && new URL(event.senderFrame.url).origin === ORIGIN && event.sender === win?.webContents } catch { return false }
+}
+function handle (channel, fn) {
+  ipcMain.handle(channel, (event, ...args) => { if (!trusted(event)) throw new Error('IPC no autorizado'); return fn(event, ...args) })
+}
+
 // ---------------------------------------------------------------- ventana
 async function createWindow () {
   migrateLegacy()
@@ -130,25 +155,35 @@ async function createWindow () {
     dialog.showErrorBox('Capcraft Editor — no pudo iniciar el motor', `${e.message}\n\nCopia este mensaje y pásaselo a Claude.`)
     app.quit(); return
   }
+  ORIGIN = `http://127.0.0.1:${port}`
+  hardenSession()
   win = new BrowserWindow({
     width: 1500, height: 920, minWidth: 1100, minHeight: 700,
     backgroundColor: '#0e0f13', title: `Capcraft Editor ${app.getVersion()}`, autoHideMenuBar: true,
     icon: path.join(__dirname, 'icon.ico'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: false }
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false,
+      webSecurity: true, allowRunningInsecureContent: false, spellcheck: false
+    }
   })
-  win.loadURL(`http://127.0.0.1:${port}/`)
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' } })
+  // nunca salir de la app hacia otras páginas; los enlaces https se abren en el navegador del sistema
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(ORIGIN + '/')) { e.preventDefault(); openSafe(url) } })
+  win.webContents.on('will-redirect', (e, url) => { if (!url.startsWith(ORIGIN + '/')) e.preventDefault() })
+  win.webContents.setWindowOpenHandler(({ url }) => { openSafe(url); return { action: 'deny' } })
+  win.webContents.on('will-attach-webview', (e) => e.preventDefault())
+  win.loadURL(`${ORIGIN}/?t=${TOKEN}`)
   setupUpdater()
 }
 
-ipcMain.handle('open-video', async () => {
+handle('open-video', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Abrir video', properties: ['openFile'],
     filters: [{ name: 'Videos', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] }, { name: 'Todos', extensions: ['*'] }]
   })
   return r.canceled ? null : r.filePaths[0]
 })
-ipcMain.handle('open-media', async () => {
+handle('open-media', async () => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Importar medios', properties: ['openFile', 'multiSelections'],
     filters: [
@@ -158,19 +193,24 @@ ipcMain.handle('open-media', async () => {
   })
   return r.canceled ? [] : r.filePaths
 })
-ipcMain.handle('save-video', async (_e, suggested) => {
-  const r = await dialog.showSaveDialog(win, { title: 'Exportar video', defaultPath: suggested, filters: [{ name: 'Video MP4', extensions: ['mp4'] }] })
+handle('save-video', async (_e, suggested) => {
+  const name = typeof suggested === 'string' ? path.basename(suggested).slice(0, 120) : 'video.mp4'
+  const r = await dialog.showSaveDialog(win, { title: 'Exportar video', defaultPath: path.join(app.getPath('videos'), name), filters: [{ name: 'Video MP4', extensions: ['mp4'] }] })
   return r.canceled ? null : r.filePath
 })
-ipcMain.handle('show-in-folder', (_e, p) => shell.showItemInFolder(p))
-ipcMain.handle('toggle-devtools', () => win && win.webContents.toggleDevTools())
-ipcMain.handle('app-info', () => ({ version: app.getVersion(), packaged: PACKAGED, data: app.getPath('userData') }))
-ipcMain.handle('check-updates', async () => {
+handle('show-in-folder', (_e, p) => { if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p) })
+handle('toggle-devtools', () => win && win.webContents.toggleDevTools())
+handle('app-info', () => ({ version: app.getVersion(), packaged: PACKAGED, data: app.getPath('userData') }))
+handle('check-updates', async () => {
   if (!PACKAGED || !updater) return { status: 'dev' }
   try { const r = await updater.checkForUpdates(); return { status: 'ok', latest: r && r.updateInfo && r.updateInfo.version } } catch (e) { return { status: 'error', message: String(e.message || e) } }
 })
-ipcMain.handle('install-update', () => { if (updater) { stopEngine(); updater.quitAndInstall(true, true) } })
+handle('install-update', () => { if (updater) { stopEngine(); updater.quitAndInstall(true, true) } })
 
 app.whenReady().then(createWindow)
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-attach-webview', (e) => e.preventDefault())
+  contents.setWindowOpenHandler(({ url }) => { openSafe(url); return { action: 'deny' } })
+})
 app.on('window-all-closed', () => { stopEngine(); app.quit() })
 app.on('before-quit', stopEngine)
