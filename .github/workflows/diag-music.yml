@@ -1,0 +1,18 @@
+name: Diagnóstico biblioteca de música
+on:
+  push:
+    paths: ['.github/workflows/diag-music.yml', 'engine/capcraft_subs/music.py', 'ci/diag_music.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Probar Openverse
+        run: python ci/diag_music.py
